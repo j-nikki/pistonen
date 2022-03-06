@@ -1,0 +1,38 @@
+{
+    "version": "0.2.0",
+    "inputs": [
+        {
+            "id": "cfg",
+            "type": "command",
+            "command": "shellCommand.execute",
+            "args": {
+                "command": "([ -e '${workspaceFolder}/.cfg' ] || echo Debug>'${workspaceFolder}/.cfg') && cat '${workspaceFolder}/.cfg'",
+                "useFirstResult": true,
+            }
+        }
+    ],
+    "configurations": [
+        {
+            "name": "(gdb) launch",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/out/build/src/${input:cfg}/pistonen-test",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                },
+                {
+                    "description": "Set Disassembly Flavor to Intel",
+                    "text": "-gdb-set disassembly-flavor intel",
+                    "ignoreFailures": true
+                }
+            ],
+            "preLaunchTask": "build test"
+        }
+    ]
+}

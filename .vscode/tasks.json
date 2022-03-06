@@ -1,0 +1,14 @@
+{
+    "tasks": [
+        {
+            "type": "shell",
+            "label": "build test",
+            "command": "([ -f out/build/CMakeCache.txt ] || cmake --preset=default) && cmake --build out/build --target pistonen-test --config $(<.cfg)",
+            "problemMatcher": "$gcc",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            }
+        }
+    ],
+    "version": "2.0.0"
+}

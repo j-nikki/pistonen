@@ -1,0 +1,18 @@
+{
+    "version": 2,
+    "configurePresets": [
+        {
+            "name": "default",
+            "displayName": "Default",
+            "description": "Build using Ninja and a GCC-like compiler",
+            "generator": "Ninja Multi-Config",
+            "binaryDir": "${sourceDir}/out/build",
+            "cacheVariables": {
+                "CMAKE_CXX_FLAGS": "-fverbose-asm -masm=intel",
+                "CMAKE_CXX_FLAGS_DEBUG": "-ggdb3 -O0",
+                "CMAKE_CXX_FLAGS_RELEASE": "-Ofast -fno-exceptions -fno-rtti -flto",
+                "CMAKE_CXX_FLAGS_RELWITHDEBINFO": "-O2 -g -DNDEBUG"
+            }
+        }
+    ]
+}
