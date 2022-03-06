@@ -49,4 +49,7 @@ own/
 **/.history
 
 # End of https://www.gitignore.io/api/visualstudiocode
-.cfg
+.preset
+.target
+.ts
+CMakeUserPresets.json

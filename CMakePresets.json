@@ -1,16 +1,36 @@
 {
-    "version": 2,
+    "version": 3,
     "configurePresets": [
         {
-            "name": "default",
-            "displayName": "Default",
-            "description": "Build using Ninja and a GCC-like compiler",
-            "generator": "Ninja Multi-Config",
+            "name": "base",
+            "generator": "Ninja",
             "binaryDir": "${sourceDir}/out/build",
+            "hidden": true,
             "cacheVariables": {
-                "CMAKE_CXX_FLAGS": "-fverbose-asm -masm=intel",
-                "CMAKE_CXX_FLAGS_DEBUG": "-ggdb3 -O0",
-                "CMAKE_CXX_FLAGS_RELEASE": "-Ofast -fno-exceptions -fno-rtti -flto",
+                "CMAKE_CXX_FLAGS": "-fverbose-asm -masm=intel"
+            }
+        },
+        {
+            "inherits": "base",
+            "name": "debug",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "CMAKE_CXX_FLAGS_DEBUG": "-ggdb3 -O0"
+            }
+        },
+        {
+            "inherits": "base",
+            "name": "release",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "CMAKE_CXX_FLAGS_RELEASE": "-Ofast -fno-exceptions -fno-rtti -flto"
+            }
+        },
+        {
+            "inherits": "base",
+            "name": "relwithdebinfo",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "RelWithDebInfo",
                 "CMAKE_CXX_FLAGS_RELWITHDEBINFO": "-O2 -g -DNDEBUG"
             }
         }

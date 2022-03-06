@@ -3,11 +3,12 @@
         {
             "type": "shell",
             "label": "build test",
-            "command": "([ -f out/build/CMakeCache.txt ] || cmake --preset=default) && cmake --build out/build --target pistonen-test --config $(<.cfg)",
+            "command": "python3 '${workspaceFolder}/build.py'",
             "problemMatcher": "$gcc",
             "options": {
                 "cwd": "${workspaceFolder}"
-            }
+            },
+            "group": "build"
         }
     ],
     "version": "2.0.0"
