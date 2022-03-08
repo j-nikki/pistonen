@@ -119,7 +119,7 @@ struct server {
                 epoll_event ev{.events = EPOLLIN, .data{.ptr = h.address()}};
                 CHECK(epoll_ctl(b.epfd, EPOLL_CTL_ADD, b.fd, &ev), != -1);
             }
-            return !First;
+            return true;
         }
         inline std::tuple<ssize_t, void *&, size_t &> await_resume() const noexcept
         {
