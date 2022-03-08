@@ -6,4 +6,4 @@ add_executable(pistonen-test test.cpp)
 
 set_property(TARGET pistonen-test PROPERTY CXX_STANDARD 23)
 
-target_include_directories(pistonen-test PRIVATE BOOST_PREPROCESSOR_INCLUDE_DIR)
+target_include_directories(pistonen-test PRIVATE ${BOOST_PREPROCESSOR_INCLUDE_DIR})

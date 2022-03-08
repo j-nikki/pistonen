@@ -1,23 +1,14 @@
 {
     "version": "0.2.0",
-    "inputs": [
-        {
-            "id": "cfg",
-            "type": "command",
-            "command": "shellCommand.execute",
-            "args": {
-                "command": "([ -e '${workspaceFolder}/.cfg' ] || echo Debug>'${workspaceFolder}/.cfg') && cat '${workspaceFolder}/.cfg'",
-                "useFirstResult": true,
-            }
-        }
-    ],
     "configurations": [
         {
             "name": "(gdb) launch",
             "type": "cppdbg",
             "request": "launch",
-            "program": "${workspaceFolder}/out/build/src/${input:cfg}/pistonen-test",
-            "args": [],
+            "program": "${workspaceFolder}/out/build/src/pistonen-test",
+            "args": [
+                "3000"
+            ],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
             "setupCommands": [

@@ -5,9 +5,9 @@
             "name": "base",
             "generator": "Ninja",
             "binaryDir": "${sourceDir}/out/build",
-            "hidden": true,
             "cacheVariables": {
-                "CMAKE_CXX_FLAGS": "-fverbose-asm -masm=intel"
+                "CMAKE_CXX_FLAGS": "-fdiagnostics-color=always -fverbose-asm -masm=intel -Wpedantic -Wall -Wextra -Wduplicated-cond -Wduplicated-branches -Wlogical-op -Wrestrict -Wnull-dereference -Wold-style-cast -Wuseless-cast -Wdouble-promotion -Wshadow -Wformat=2 -Wno-missing-field-initializers -Wno-comment",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
             }
         },
         {
@@ -33,6 +33,17 @@
                 "CMAKE_BUILD_TYPE": "RelWithDebInfo",
                 "CMAKE_CXX_FLAGS_RELWITHDEBINFO": "-O2 -g -DNDEBUG"
             }
+        }
+    ],
+    "buildPresets": [
+        {
+            "name": "base",
+            "configurePreset": "base"
+        },
+        {
+            "inherits": "base",
+            "name": "test",
+            "targets": "pistonen-test"
         }
     ]
 }
