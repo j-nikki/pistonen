@@ -1,12 +1,12 @@
 {
-    "C_Cpp.codeAnalysis.clangTidy.enabled": false,
-    "json.schemas": [
-        {
-            "fileMatch": [
-                "CMakePresets.json",
-                "CMakeUserPresets.json"
-            ],
-            "url": "https://cmake.org/cmake/help/latest/_downloads/3e2d73bff478d88a7de0de736ba5e361/schema.json"
-        }
-    ]
+    "doxdocgen.c.triggerSequence": "//!",
+    "doxdocgen.c.firstLine": "",
+    "doxdocgen.c.lastLine": "",
+    "doxdocgen.c.commentPrefix": "//! ",
+    "doxdocgen.generic.order": [
+        "brief",
+        "tparam",
+        "param",
+        "return"
+    ],
 }
