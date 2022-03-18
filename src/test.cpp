@@ -99,7 +99,7 @@ constexpr inline auto first = []<class T>(T &x) {
             } else
 
 struct read_state {
-    void *buf;
+    char *buf;
     size_t nbuf;
     ssize_t nread;
 };
@@ -128,6 +128,12 @@ struct task {
 };
 
 struct socket {
+    int fd;
+
+    //
+    // read
+    //
+
   private:
     struct read_res_base : read_state {
         [[nodiscard]] PNEN_inline bool has_next() noexcept { return true; }
@@ -139,7 +145,7 @@ struct socket {
         {
             h.promise().rs = &b;
         }
-        PNEN_inline std::tuple<ssize_t, void *&, size_t &> await_resume() noexcept
+        PNEN_inline std::tuple<ssize_t, char *&, size_t &> await_resume() noexcept
         {
             return {b.nread, b.buf, b.nbuf};
         }
@@ -153,7 +159,23 @@ struct socket {
     //! @param buf The start of destination buffer
     //! @param nbuf The maximum amount of bytes to read
     //! @return read_res_iter Await-iterable yielding amount of bytes read
-    read_res_iter read(void *const buf, const size_t nbuf) const noexcept { return {buf, nbuf}; }
+    PNEN_inline read_res_iter read(char *const buf, const size_t nbuf) const noexcept
+    {
+        return {buf, nbuf};
+    }
+
+    //
+    // write
+    //
+
+    PNEN_inline ssize_t write(const void *const buf, size_t nbuf) const noexcept
+    {
+        return ::write(fd, buf, nbuf);
+    }
+    PNEN_inline ssize_t write(const std::string_view buf) const noexcept
+    {
+        return write(buf.data(), buf.size());
+    }
 };
 
 using detail::socket;
@@ -168,7 +190,7 @@ using promisety = std::coroutine_traits<std::invoke_result_t<F, Args...>, Args..
 template <class F, class... Args>
 using crhdlty = std::coroutine_handle<typename promisety<F, Args...>::promise_type>;
 
-template <std::invocable<socket &&> Task>
+template <callable_r<task, socket &&> Task>
 PNEN_inline void run_server(const run_server_options o, Task on_accept)
 {
     using crhdl     = crhdlty<Task, socket &&>;
@@ -233,6 +255,7 @@ int main(const int argc, char *const argv[])
     using SV = std::string_view;
     if (argc != 2) {
         fprintf(stderr, "usage: %s <port-number>\n", argv[0]);
+        return 1;
     }
     const pnen::run_server_options o{.hostport = static_cast<uint16_t>(atoi(argv[1])),
                                      .timeout  = {.tv_sec = 3}};
@@ -240,14 +263,16 @@ int main(const int argc, char *const argv[])
         static constexpr size_t nbuffer = 8 * 1024 * 1024;
         char buffer[nbuffer];
         FOR_CO_AWAIT (n, buf, nbuf, s.read(buffer, nbuffer)) {
-            const SV svbuf{buffer, static_cast<size_t>(n)};
+            const SV svbuf{buffer, buf + n};
             const auto [it, _] = sr::search(svbuf, SV{"\r\n\r\n"});
             if (it == svbuf.end()) { // partial header only
-                reinterpret_cast<char *&>(buf) += n;
+                buf += n;
                 nbuf -= n;
-                if (nbuf == 0)
-                    co_return; // TODO: return "431 Request Header Fields Too Large"
-            } else {           // end of header (CRLFCRLF)
+                if (nbuf == 0) {
+                    s.write("431 Request Header Fields Too Large\r\n\r\n");
+                    co_return;
+                }
+            } else { // end of header (CRLFCRLF)
                 printf("received message:\n");
                 printf("vvv\n%.*s\n^^^\n", static_cast<int>(n), buffer);
                 buf  = buffer;
