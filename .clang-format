@@ -7,3 +7,5 @@ AlwaysBreakTemplateDeclarations: Yes
 CommentPragmas: '^! .*'
 BinPackParameters: true
 ForEachMacros: ['FOR_CO_AWAIT']
+AlignConsecutiveMacros: AcrossEmptyLinesAndComments
+AllowShortCaseLabelsOnASingleLine: true

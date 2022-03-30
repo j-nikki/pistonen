@@ -2,16 +2,38 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
+#include <boost/preprocessor/cat.hpp>
+#include <boost/preprocessor/comparison/equal.hpp>
+#include <boost/preprocessor/control/if.hpp>
+#include <boost/preprocessor/punctuation/comma_if.hpp>
+#include <boost/preprocessor/repetition/repeat.hpp>
+#include <boost/preprocessor/seq/fold_left.hpp>
+#include <boost/preprocessor/seq/for_each.hpp>
+#include <boost/preprocessor/seq/for_each_i.hpp>
+#include <boost/preprocessor/stringize.hpp>
+#include <boost/preprocessor/variadic/to_seq.hpp>
 #include <cassert>
 #include <concepts>
+#include <limits>
+#include <new>
 #include <ranges>
 #include <span>
 #include <type_traits>
+#include <x86intrin.h>
 
 #include "lmacro_begin.h"
 
 namespace jutil
 {
+#ifdef __cpp_lib_hardware_interference_size
+using std::hardware_constructive_interference_size;
+using std::hardware_destructive_interference_size;
+#else
+// 64 bytes on x86-64 │ L1_CACHE_BYTES │ L1_CACHE_SHIFT │ __cacheline_aligned │ ...
+constexpr std::size_t hardware_constructive_interference_size = 64;
+constexpr std::size_t hardware_destructive_interference_size  = 64;
+#endif
 
 namespace sr = std::ranges;
 namespace sv = std::views;
@@ -31,8 +53,35 @@ struct deferty {
 };
 } // namespace impl
 
+template <class To, class From>
+concept static_castable = requires(From &&x)
+{
+    static_cast<To>(static_cast<From &&>(x));
+};
+template <class To, class From>
+concept bit_castable = sizeof(To) == sizeof(From) &&
+                       std::is_trivially_copyable_v<To> &&std::is_trivially_copyable_v<From>;
+template <class To, class From>
+concept opaque_castable = static_castable<To, From> || bit_castable<To, From>;
+template <class To, class From>
+constexpr To opaque_cast(From &&x) noexcept
+{
+    if constexpr (static_castable<To, From>)
+        return static_cast<To>(static_cast<From &&>(x));
+    else
+        return std::bit_cast<To>(static_cast<From &&>(x));
+}
+template <class To, opaque_castable<To> From>
+constexpr To opaque_cast(From &x) noexcept
+{
+    if constexpr (static_castable<To, From>)
+        return static_cast<To>(x);
+    else
+        return std::bit_cast<To>(x);
+}
+
 #define JUTIL_cat_exp(X, Y) X##Y
-#define CAT(X, Y) JUTIL_cat_exp(X, Y)
+#define CAT(X, Y)           JUTIL_cat_exp(X, Y)
 #ifdef _MSC_VER
 #pragma warning(push)
 #pragma warning(disable : 5104)
@@ -43,38 +92,93 @@ struct deferty {
 #endif
 
 #define WSTRINGIFY(X) JUTIL_wstr_exp(X)
-#define DEFER const auto CAT(__defer_, __LINE__) = impl::deferty{} =
+#define DEFER         const auto CAT(__defer_, __LINE__) = impl::deferty{} =
 
-// The qualifiee *must* be inlined; not being so is an error
 #ifdef _MSC_VER
-#define JUTIL_INLINE inline __forceinline
-#define JUTIL_NOINLINE __declspec(noinline)
+#define JUTIL_PREFETCH(P) (void)0
+#define JUTIL_INLINE      inline __forceinline
+#define JUTIL_NOINLINE    __declspec(noinline)
+#define JUTIL_TRAP()      __debugbreak()
+#define JUTIL_NO_DEFAULT()                                                                         \
+    default:                                                                                       \
+        __assume(0)
 #else
-#define JUTIL_INLINE inline __attribute__((always_inline))
-#define JUTIL_NOINLINE __attribute__((noinline))
+#define JUTIL_PREFETCH(P)                                                                          \
+    do {                                                                                           \
+        if (!std::is_constant_evaluated())                                                         \
+            __builtin_prefetch(P);                                                                 \
+    } while (0)
+#define JUTIL_INLINE           inline __attribute__((always_inline))
+#define JUTIL_NOINLINE         __attribute__((noinline))
+#define JUTIL_pd_exp(D1, ...)  D1 __VA_OPT__(JUTIL_pd_exp(__VA_ARGS__))
+#define JUTIL_PUSH_DIAG(...)   _Pragma("GCC diagnostic push") JUTIL_pd_exp(__VA_ARGS__)
+#define JUTIL_POP_DIAG()       _Pragma("GCC diagnostic pop")
+#define JUTIL_WNO_UNUSED_VALUE _Pragma("GCC diagnostic ignored \"-Wunused-value\"")
+#define JUTIL_WNO_UNUSED_PARAM _Pragma("GCC diagnostic ignored \"-Wunused-parameter\"")
+#define JUTIL_WNO_SHADOW       _Pragma("GCC diagnostic ignored \"-Wshadow\"")
+#define JUTIL_WNO_PARENTHESES  _Pragma("GCC diagnostic ignored \"-Wparentheses\"")
+#define JUTIL_WNO_SEQUENCE     _Pragma("GCC diagnostic ignored \"-Wsequence-point\"")
+#define JUTIL_WNO_CCAST        _Pragma("GCC diagnostic ignored \"-Wold-style-cast\"")
+#define JUTIL_TRAP()           __builtin_trap()
+#define JUTIL_NO_DEFAULT()                                                                         \
+    default:                                                                                       \
+        __builtin_unreachable()
 #endif
 
 #ifndef NDEBUG
-#define DBGEXPR(...) __VA_ARGS__
+#define DBGEXPR(...)  __VA_ARGS__
 #define DBGSTMNT(...) __VA_ARGS__
-#define JUTIL_assert(E, For, Str)                                                                  \
-    [&] {                                                                                          \
-        auto e = E;                                                                                \
-        if (!(e For)) {                                                                            \
-            fprintf(stderr, Str #E "\n");                                                          \
-            assert(false);                                                                         \
+#define JUTIL_c_impl(E, For, ...)                                                                  \
+    [&]<class BOOST_PP_CAT(JaT, __LINE__)>(                                                        \
+        BOOST_PP_CAT(JaT, __LINE__) && BOOST_PP_CAT(jae, __LINE__)) -> BOOST_PP_CAT(JaT,           \
+                                                                                    __LINE__) {    \
+        if (!(BOOST_PP_CAT(jae, __LINE__) For)) {                                                  \
+            if constexpr (jutil::opaque_castable<uintmax_t, BOOST_PP_CAT(JaT, __LINE__)>)          \
+                fprintf(stderr, "\033[2m" __FILE__ ":" BOOST_PP_STRINGIZE(__LINE__) ":\033[0m assertion failed: \033[1m%s "              \
+                                              "\033[2m(%#jx)\033[0;1m %s\033[0m\n",                \
+                                    (__VA_OPT__((void)) #E __VA_OPT__(, __VA_ARGS__)),             \
+                                    jutil::opaque_cast<uintmax_t>(BOOST_PP_CAT(jae, __LINE__)),    \
+                                    #For);                                                         \
+            else                                                                                   \
+                fprintf(stderr, "\033[2m" __FILE__ ":" BOOST_PP_STRINGIZE(__LINE__) ":\033[0m assertion failed: \033[1m%s %s\033[0m\n",  \
+                                    (__VA_OPT__((void)) #E __VA_OPT__(, __VA_ARGS__)), #For);      \
+            JUTIL_TRAP();                                                                          \
         }                                                                                          \
-        return e;                                                                                  \
-    }()
+        return BOOST_PP_CAT(jae, __LINE__);                                                        \
+    }(E)
 #else
 #define DBGEXPR(...) ((void)0)
 #define DBGSTMNT(...)
-#define JUTIL_assert(E, ...) E
+#define JUTIL_c_impl(E, ...)                                                                       \
+    [&]<class BOOST_PP_CAT(JaT, __LINE__)>(                                                        \
+        BOOST_PP_CAT(JaT, __LINE__) && BOOST_PP_CAT(jae, __LINE__)) -> BOOST_PP_CAT(JaT,           \
+                                                                                    __LINE__) {    \
+        return BOOST_PP_CAT(jae, __LINE__);                                                        \
+    }(E)
 #endif
-#define ASSERT(E) JUTIL_assert(E, /**/, "Expression not true: ")
-#define ASSERT_0(E) JUTIL_assert(E, == 0i64, "Expression non-zero: ")
-#define ASSERT_EQ(E, X) JUTIL_assert(E, == X, "Expression not equal to " #X ":")
-#define ASSERT_NEQ(E, X) JUTIL_assert(E, != X, "Expression not equal to " #X ":")
+
+#define JUTIL_FAIL(Msg)                                                                            \
+    ([]<bool BOOST_PP_CAT(F, __LINE__) = false>() {                                                \
+        static_assert(BOOST_PP_CAT(F, __LINE__), Msg);                                             \
+    })()
+#define JUTIL_c_exp_fold_op(d, acc, x) JUTIL_c_impl(acc, x, BOOST_PP_CAT(msg, __LINE__))
+#define JUTIL_c_exp_fold(E, For0, ...)                                                             \
+    [&]<class BOOST_PP_CAT(JaeT, __LINE__)>(BOOST_PP_CAT(JaeT, __LINE__) &&                        \
+                                            BOOST_PP_CAT(e, __LINE__)) -> BOOST_PP_CAT(JaeT,       \
+                                                                                       __LINE__) { \
+        JUTIL_PUSH_DIAG(JUTIL_WNO_SHADOW);                                                         \
+        static constexpr auto BOOST_PP_CAT(msg, __LINE__) = #E;                                    \
+        return BOOST_PP_SEQ_FOLD_LEFT(                                                             \
+            JUTIL_c_exp_fold_op,                                                                   \
+            JUTIL_c_impl(BOOST_PP_CAT(e, __LINE__), For0, BOOST_PP_CAT(msg, __LINE__)),            \
+            BOOST_PP_VARIADIC_TO_SEQ(__VA_ARGS__));                                                \
+        JUTIL_POP_DIAG()                                                                           \
+    }(E)
+#define JUTIL_c_exp(E, For0, ...)                                                                  \
+    BOOST_PP_IF(BOOST_PP_CHECK_EMPTY(__VA_ARGS__), JUTIL_c_impl, JUTIL_c_exp_fold)                 \
+    (E, For0, __VA_ARGS__)
+#define CHECK(E, ...)                                                                              \
+    BOOST_PP_IF(BOOST_PP_CHECK_EMPTY(__VA_ARGS__), JUTIL_c_impl, JUTIL_c_exp)(E, __VA_ARGS__)
 
 //
 // callable traits (function call expression only)
@@ -90,53 +194,13 @@ concept callable_r = requires(T f) {
 };
 // clang-format on
 template <class T, class... Args>
+concept predicate = callable_r<T, bool, Args...>;
+template <class T, class... Args>
 constexpr inline bool is_callable = callable<T, Args...>;
 template <class R, class T, class... Args>
 constexpr inline bool is_callable_r = callable_r<T, R, Args...>;
 template <class T, class... Args>
 using call_result = decltype(std::declval<T>()(std::declval<Args>()...));
-
-namespace impl
-{
-template <class F, class G>
-struct lty {
-    F f_;
-    G g_;
-    template <class T>
-    requires(requires { f_(std::declval<T &&>()); }) constexpr JUTIL_INLINE auto
-    operator()(T &&x) noexcept(noexcept(f_(static_cast<T &&>(x))))
-        -> decltype(f_(static_cast<T &&>(x)))
-    {
-        return f_(static_cast<T &&>(x));
-    }
-    template <class T>
-    requires(requires { f_(std::declval<T &&>()); }) constexpr JUTIL_INLINE auto
-    operator()(T &&x) const noexcept(noexcept(f_(static_cast<T &&>(x))))
-        -> decltype(f_(static_cast<T &&>(x)))
-    {
-        return f_(static_cast<T &&>(x));
-    }
-    template <class T, class U>
-    requires(requires { g_(std::declval<T &&>(), std::declval<U &&>()); }) constexpr JUTIL_INLINE
-        auto
-        operator()(T &&x, U &&y) noexcept(noexcept(g_(static_cast<T &&>(x), static_cast<U &&>(y))))
-            -> decltype(f_(static_cast<T &&>(x), static_cast<U &&>(y)))
-    {
-        return g_(static_cast<T &&>(x), static_cast<U &&>(y));
-    }
-    template <class T, class U>
-    requires(requires { g_(std::declval<T &&>(), std::declval<U &&>()); }) constexpr JUTIL_INLINE
-        auto
-        operator()(T &&x, U &&y) const
-        noexcept(noexcept(g_(static_cast<T &&>(x), static_cast<U &&>(y))))
-            -> decltype(f_(static_cast<T &&>(x), static_cast<U &&>(y)))
-    {
-        return g_(static_cast<T &&>(x), static_cast<U &&>(y));
-    }
-};
-template <class F, class G>
-lty(F &&, G &&) -> lty<F, G>;
-}; // namespace impl
 
 //
 // curry
@@ -420,6 +484,85 @@ constexpr JUTIL_INLINE uintptr_t to_uint(void *x) noexcept { return std::bit_cas
 constexpr JUTIL_INLINE void *to_ptr(uintptr_t x) noexcept { return std::bit_cast<void *>(x); }
 
 //
+// Duff's device
+//
+
+template <std::size_t Factor = 16>
+constexpr JUTIL_INLINE void duffs(std::integral auto n, callable auto &&f) noexcept(noexcept(f()))
+{
+    if (!n)
+        return;
+#define JUTIL_dd_c(z, j, fact)                                                                     \
+    case (j ? fact - j : 0):                                                                       \
+        f();                                                                                       \
+        BOOST_PP_IF(BOOST_PP_EQUAL(j, BOOST_PP_DEC(fact)), break, [[fallthrough]]);
+    if constexpr (Factor == 1) {
+        while (n--)
+            f();
+    }
+#define JUTIL_dd_fact(z, _, fact)                                                                  \
+    else if constexpr (Factor == fact)                                                             \
+    {                                                                                              \
+        switch (auto i = (n + fact - 1) / fact; n % fact) {                                        \
+            do {                                                                                   \
+                BOOST_PP_REPEAT(fact, JUTIL_dd_c, fact)                                            \
+                JUTIL_NO_DEFAULT();                                                                \
+            } while (--i);                                                                         \
+        }                                                                                          \
+    }
+    BOOST_PP_SEQ_FOR_EACH(JUTIL_dd_fact, ~, (2)(4)(8)(16)(32)(64))
+    else JUTIL_FAIL("Factor must be one of: 1,2,4,8,16,32,64");
+#undef JUTIL_dd_fact
+#undef JUTIL_dd_c
+}
+
+//
+// intrinsics
+//
+inline namespace intrin
+{
+#define JUTIL_i_enum(r, _, i, x)     BOOST_PP_COMMA_IF(i) x BOOST_PP_CAT(arg, i)
+#define JUTIL_i_enum_fwd(r, _, i, x) BOOST_PP_COMMA_IF(i) BOOST_PP_CAT(arg, i)
+#define JUTIL_intrin_exp(n, in, s)                                                                 \
+    auto n(BOOST_PP_SEQ_FOR_EACH_I(JUTIL_i_enum, ~, s)) noexcept(                                  \
+        noexcept(in(BOOST_PP_SEQ_FOR_EACH_I(JUTIL_i_enum_fwd, ~, s))))                             \
+        ->decltype(in(BOOST_PP_SEQ_FOR_EACH_I(JUTIL_i_enum_fwd, ~, s)))                            \
+    {                                                                                              \
+        return in(BOOST_PP_SEQ_FOR_EACH_I(JUTIL_i_enum_fwd, ~, s));                                \
+    }
+#define JUTIL_intrin(name, iname, ...)                                                             \
+    JUTIL_intrin_exp(name, iname, BOOST_PP_VARIADIC_TO_SEQ(__VA_ARGS__))
+// clang-format off
+JUTIL_intrin(ffs, __builtin_ffs, int)
+JUTIL_intrin(clz, __builtin_clz, unsigned int)
+JUTIL_intrin(ctz, __builtin_ctz, unsigned int)
+JUTIL_intrin(clrsb, __builtin_clrsb, int)
+JUTIL_intrin(popcount, __builtin_popcount, unsigned int)
+JUTIL_intrin(parity, __builtin_parity, unsigned int)
+JUTIL_intrin(ffs, __builtin_ffsl, long)
+JUTIL_intrin(clz, __builtin_clzl, unsigned long)
+JUTIL_intrin(ctz, __builtin_ctzl, unsigned long)
+JUTIL_intrin(clrsb, __builtin_clrsbl, long)
+JUTIL_intrin(popcount, __builtin_popcountl, unsigned long)
+JUTIL_intrin(parity, __builtin_parityl, unsigned long)
+JUTIL_intrin(ffs, __builtin_ffsll, long long)
+JUTIL_intrin(clz, __builtin_clzll, unsigned long long)
+JUTIL_intrin(ctz, __builtin_ctzll, unsigned long long)
+JUTIL_intrin(clrsb, __builtin_clrsbll, long long)
+JUTIL_intrin(popcount, __builtin_popcountll, unsigned long long)
+JUTIL_intrin(parity, __builtin_parityll, unsigned long long)
+JUTIL_intrin(powi, __builtin_powi, double, int)
+JUTIL_intrin(powi, __builtin_powif, float, int)
+JUTIL_intrin(powi, __builtin_powil, long double, int)
+JUTIL_intrin(bswap, __builtin_bswap16, uint16_t)
+JUTIL_intrin(bswap, __builtin_bswap32, uint32_t)
+JUTIL_intrin(bswap, __builtin_bswap64, uint64_t)
+JUTIL_intrin(bsr, 63 ^ __builtin_clzl, unsigned long)
+JUTIL_intrin(bsr, 31 ^ __builtin_clz, unsigned int)
+// clang-format on
+} // namespace intrin
+
+//
 // call
 //
 template <callable<> F>
@@ -474,7 +617,7 @@ constexpr It2 transform_always_until(
     const auto &x) noexcept(noexcept(*++f2 = transf(*++f)) &&noexcept(f[l - f - 1] = x))
 {
     for (; *f != x; ++f, ++f2)
-        ASSERT(f != l), *f2 = transf(*f);
+        CHECK(f != l), *f2 = transf(*f);
     return f2;
 }
 
@@ -491,6 +634,113 @@ template <constant_sized_input_range R, class TVal, class Proj = std::identity>
 {
     return find_unrl(r, val) != sr::end(r);
 }
+
+//
+// swap
+//
+struct iter_swap_t {
+    constexpr JUTIL_INLINE void operator()(auto a, auto b) const
+        noexcept(noexcept(sr::iter_swap(a, b)))
+    {
+        sr::iter_swap(a, b);
+    }
+};
+constexpr inline iter_swap_t iter_swap{};
+constexpr inline curry mirror_swap{
+    [](auto src, auto dst, auto a, auto b) noexcept(noexcept(
+        sr::iter_swap(sr::next(src, sr::distance(dst, a)), sr::next(src, sr::distance(dst, b))))) {
+        const auto aoff = sr::distance(dst, a);
+        const auto boff = sr::distance(dst, b);
+        sr::iter_swap(sr::next(src, aoff), sr::next(src, boff));
+    }};
+
+//
+// max heap
+//
+template <std::random_access_iterator I, std::sentinel_for<I> S, class Comp = sr::less,
+          class Proj = std::identity, class IterSwap = iter_swap_t>
+requires std::sortable<I, Comp, Proj>
+constexpr I
+push_heap(I f, S l, Comp comp = {}, Proj proj = {},
+          IterSwap is = {}) noexcept(noexcept(comp(proj(f[0]), proj(f[0]))) &&noexcept(is(f, f)))
+{
+    auto xi = (l - f) - 1;
+    for (auto upi = xi / 2;; (xi = upi, upi = xi / 2))
+        if (!xi || comp(proj(f[xi]), proj(f[upi])))
+            return f + xi;
+        else
+            is(f + upi, f + xi);
+}
+
+//
+// eytzinger-indexed heap
+//
+template <class IdxTy = std::size_t, std::random_access_iterator I, std::sentinel_for<I> S,
+          class Comp = sr::less, class Proj = std::identity>
+[[nodiscard]] constexpr JUTIL_INLINE bool
+is_heap_eytz(I f, S l, Comp comp = {},
+             Proj proj = {}) noexcept(noexcept(comp(proj(f[0]), proj(f[0]))))
+{
+    const auto n = static_cast<IdxTy>(l - f);
+    for (IdxTy i = 1; i / 2 < n; ++i) {
+        const auto li = i * 2, ri = i * 2 + 1;
+        if (li < n && !comp(proj(f[li]), proj(f[i])))
+            return false;
+        if (ri < n && !comp(proj(f[i]), proj(f[ri])))
+            return false;
+    }
+    return true;
+}
+template <class RetTy = std::size_t, bool Trim = true, std::random_access_iterator I,
+          std::sentinel_for<I> S, class Comp = sr::less, class Proj = std::identity>
+[[nodiscard]] constexpr JUTIL_INLINE RetTy lower_bound_eytz_idx(
+    I f, S l, const auto &x, Comp comp = {}, Proj proj = {}) noexcept(noexcept(comp(proj(f[1]), x)))
+{
+    CHECK(is_heap_eytz(f, l, comp, proj));
+    const auto n = static_cast<RetTy>(l - f);
+    RetTy i      = 1;
+    while (i < n) {
+        JUTIL_PREFETCH(f + i * (hardware_destructive_interference_size / sizeof(f[i])));
+        i = i * 2 + comp(proj(f[i]), x);
+    }
+    return Trim ? CHECK(i >> __builtin_ffs(~i), > 0, < n) : i;
+}
+template <class IdxTy = std::size_t, std::random_access_iterator I, std::sentinel_for<I> S,
+          class Comp = sr::less, class Proj = std::identity>
+[[nodiscard]] constexpr JUTIL_INLINE I
+lower_bound_eytz(I f, S l, const auto &x, Comp comp = {},
+                 Proj proj = {}) noexcept(noexcept(comp(proj(f[1]), proj(f[1]))))
+{
+    return f + lower_bound_eytz_idx<IdxTy>(f, l, x, comp, proj);
+}
+JUTIL_PUSH_DIAG(JUTIL_WNO_PARENTHESES, JUTIL_WNO_SEQUENCE)
+template <class IdxTy = std::size_t, std::size_t DD = 1, std::random_access_iterator I,
+          std::sentinel_for<I> S, class Comp = sr::less, class Proj = std::identity>
+constexpr JUTIL_INLINE void
+push_eytz(I f, S l, Comp comp = {}, Proj proj = {}) noexcept(noexcept(comp(proj(f[1]), proj(f[1]))))
+{
+    const auto xi = static_cast<IdxTy>(l - f) - 1;
+    if (xi == 1)
+        return;
+    const auto hm1         = static_cast<IdxTy>(bsr(to_unsigned(xi - 1)));
+    const IdxTy ctzxormsk1 = ~(2u << hm1), ctzxormsk2 = ~(1u << hm1);
+    for (;;) {
+        CHECK(is_heap_eytz(f, f + xi, comp, proj));
+        IdxTy lb = 1;
+        duffs<DD>(hm1, [&] { lb = (lb * 2) + comp(proj(f[lb]), proj(f[xi])); });
+        const auto lblt = lb < xi;
+        lb              = !lblt ? lb : lb * 2 + comp(proj(f[lb]), proj(f[xi]));
+        if (lb == xi)
+            break;
+        const auto ctzxormsk = lblt ? ctzxormsk1 : ctzxormsk2;
+        const auto nz        = static_cast<IdxTy>(ctz(to_unsigned((lb & 1) ? lb ^ ctzxormsk : lb)));
+        std::iter_value_t<I> tmp{sr::iter_move(f + (lb >> nz))};
+        duffs<DD>(nz - 1, [&, i = nz] mutable { f[lb >> i--] = sr::iter_move(f + (lb >> i - 1)); });
+        f[lb >> 1] = sr::iter_move(f + xi);
+        f[xi]      = std::move(tmp);
+    }
+}
+JUTIL_POP_DIAG()
 
 //
 // find_always
@@ -510,7 +760,7 @@ requires std::is_lvalue_reference_v<call_result<Proj &, std::iter_reference_t<It
                                                     Proj proj = {})
 {
     while (proj(*f) != x)
-        ASSERT(f != l), ++f;
+        CHECK(f != l), ++f;
     return f;
 }
 template <sr::input_range R, class T, class Proj = std::identity>
@@ -524,7 +774,7 @@ template <std::random_access_iterator It, class Pred, class Proj = std::identity
 find_if_always_idx(It f, [[maybe_unused]] const It l, Pred pred, Proj proj = {})
 {
     for (std::size_t i = 0;; ++i)
-        if (ASSERT(i != static_cast<std::size_t>(sr::distance(f, l))), pred(proj(f[i])))
+        if (CHECK(i != static_cast<std::size_t>(sr::distance(f, l))), pred(proj(f[i])))
             return i;
 }
 template <sr::random_access_range R, class Pred, class Proj = std::identity>
@@ -537,7 +787,7 @@ template <std::input_iterator It, class Proj = std::identity>
                                                        Proj proj = {})
 {
     while (!pred(proj(*f)))
-        ASSERT(f != l), ++f;
+        CHECK(f != l), ++f;
     return f;
 }
 template <borrowed_input_range R, class Proj = std::identity>

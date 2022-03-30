@@ -9,4 +9,9 @@
         "param",
         "return"
     ],
+    "files.associations": {
+        "*.o": "asm-intel-x86-generic",
+        "*.inc": "cpp",
+        "numbers": "cpp"
+    },
 }

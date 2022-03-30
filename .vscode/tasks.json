@@ -8,7 +8,10 @@
             "options": {
                 "cwd": "${workspaceFolder}"
             },
-            "group": "build"
+            "group": "build",
+            "presentation": {
+                "clear": true
+            },
         }
     ],
     "version": "2.0.0"
