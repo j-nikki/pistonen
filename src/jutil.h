@@ -15,7 +15,7 @@
 #include <boost/preprocessor/variadic/to_seq.hpp>
 #include <cassert>
 #include <concepts>
-#include <limits>
+#include <limits.h>
 #include <new>
 #include <ranges>
 #include <span>
@@ -80,8 +80,6 @@ constexpr To opaque_cast(From &x) noexcept
         return std::bit_cast<To>(x);
 }
 
-#define JUTIL_cat_exp(X, Y) X##Y
-#define CAT(X, Y)           JUTIL_cat_exp(X, Y)
 #ifdef _MSC_VER
 #pragma warning(push)
 #pragma warning(disable : 5104)
@@ -92,25 +90,29 @@ constexpr To opaque_cast(From &x) noexcept
 #endif
 
 #define WSTRINGIFY(X) JUTIL_wstr_exp(X)
-#define DEFER         const auto CAT(__defer_, __LINE__) = impl::deferty{} =
+#define DEFER         const auto BOOST_PP_CAT(__defer_, __LINE__) = jutil::impl::deferty{} =
 
 #ifdef _MSC_VER
-#define JUTIL_PREFETCH(P) (void)0
-#define JUTIL_INLINE      inline __forceinline
-#define JUTIL_NOINLINE    __declspec(noinline)
-#define JUTIL_TRAP()      __debugbreak()
+#define JUTIL_INLINE   inline __forceinline
+#define JUTIL_NOINLINE __declspec(noinline)
+#define JUTIL_TRAP()   __debugbreak()
 #define JUTIL_NO_DEFAULT()                                                                         \
     default:                                                                                       \
         __assume(0)
 #else
-#define JUTIL_PREFETCH(P)                                                                          \
-    do {                                                                                           \
-        if (!std::is_constant_evaluated())                                                         \
-            __builtin_prefetch(P);                                                                 \
-    } while (0)
-#define JUTIL_INLINE           inline __attribute__((always_inline))
-#define JUTIL_NOINLINE         __attribute__((noinline))
-#define JUTIL_pd_exp(D1, ...)  D1 __VA_OPT__(JUTIL_pd_exp(__VA_ARGS__))
+#define JUTIL_INLINE          inline __attribute__((always_inline))
+#define JUTIL_NOINLINE        __attribute__((noinline))
+#define JUTIL_pd_exp(D1, ...) D1 __VA_OPT__(JUTIL_pd_exp(__VA_ARGS__))
+#ifdef __clang__
+#define JUTIL_PUSH_DIAG(...)
+#define JUTIL_POP_DIAG()
+#define JUTIL_WNO_UNUSED_VALUE
+#define JUTIL_WNO_UNUSED_PARAM
+#define JUTIL_WNO_SHADOW
+#define JUTIL_WNO_PARENTHESES
+#define JUTIL_WNO_SEQUENCE
+#define JUTIL_WNO_CCAST
+#elif defined(__GNUC__) || defined(__GNUG__)
 #define JUTIL_PUSH_DIAG(...)   _Pragma("GCC diagnostic push") JUTIL_pd_exp(__VA_ARGS__)
 #define JUTIL_POP_DIAG()       _Pragma("GCC diagnostic pop")
 #define JUTIL_WNO_UNUSED_VALUE _Pragma("GCC diagnostic ignored \"-Wunused-value\"")
@@ -119,7 +121,10 @@ constexpr To opaque_cast(From &x) noexcept
 #define JUTIL_WNO_PARENTHESES  _Pragma("GCC diagnostic ignored \"-Wparentheses\"")
 #define JUTIL_WNO_SEQUENCE     _Pragma("GCC diagnostic ignored \"-Wsequence-point\"")
 #define JUTIL_WNO_CCAST        _Pragma("GCC diagnostic ignored \"-Wold-style-cast\"")
-#define JUTIL_TRAP()           __builtin_trap()
+#else
+#error "unsupported compiler"
+#endif
+#define JUTIL_TRAP() __builtin_trap()
 #define JUTIL_NO_DEFAULT()                                                                         \
     default:                                                                                       \
         __builtin_unreachable()
@@ -524,7 +529,7 @@ inline namespace intrin
 #define JUTIL_i_enum(r, _, i, x)     BOOST_PP_COMMA_IF(i) x BOOST_PP_CAT(arg, i)
 #define JUTIL_i_enum_fwd(r, _, i, x) BOOST_PP_COMMA_IF(i) BOOST_PP_CAT(arg, i)
 #define JUTIL_intrin_exp(n, in, s)                                                                 \
-    auto n(BOOST_PP_SEQ_FOR_EACH_I(JUTIL_i_enum, ~, s)) noexcept(                                  \
+    JUTIL_INLINE auto n(BOOST_PP_SEQ_FOR_EACH_I(JUTIL_i_enum, ~, s)) noexcept(                     \
         noexcept(in(BOOST_PP_SEQ_FOR_EACH_I(JUTIL_i_enum_fwd, ~, s))))                             \
         ->decltype(in(BOOST_PP_SEQ_FOR_EACH_I(JUTIL_i_enum_fwd, ~, s)))                            \
     {                                                                                              \
@@ -533,34 +538,54 @@ inline namespace intrin
 #define JUTIL_intrin(name, iname, ...)                                                             \
     JUTIL_intrin_exp(name, iname, BOOST_PP_VARIADIC_TO_SEQ(__VA_ARGS__))
 // clang-format off
-JUTIL_intrin(ffs, __builtin_ffs, int)
-JUTIL_intrin(clz, __builtin_clz, unsigned int)
-JUTIL_intrin(ctz, __builtin_ctz, unsigned int)
-JUTIL_intrin(clrsb, __builtin_clrsb, int)
-JUTIL_intrin(popcount, __builtin_popcount, unsigned int)
-JUTIL_intrin(parity, __builtin_parity, unsigned int)
-JUTIL_intrin(ffs, __builtin_ffsl, long)
-JUTIL_intrin(clz, __builtin_clzl, unsigned long)
-JUTIL_intrin(ctz, __builtin_ctzl, unsigned long)
-JUTIL_intrin(clrsb, __builtin_clrsbl, long)
-JUTIL_intrin(popcount, __builtin_popcountl, unsigned long)
-JUTIL_intrin(parity, __builtin_parityl, unsigned long)
-JUTIL_intrin(ffs, __builtin_ffsll, long long)
-JUTIL_intrin(clz, __builtin_clzll, unsigned long long)
-JUTIL_intrin(ctz, __builtin_ctzll, unsigned long long)
-JUTIL_intrin(clrsb, __builtin_clrsbll, long long)
-JUTIL_intrin(popcount, __builtin_popcountll, unsigned long long)
-JUTIL_intrin(parity, __builtin_parityll, unsigned long long)
-JUTIL_intrin(powi, __builtin_powi, double, int)
-JUTIL_intrin(powi, __builtin_powif, float, int)
-JUTIL_intrin(powi, __builtin_powil, long double, int)
-JUTIL_intrin(bswap, __builtin_bswap16, uint16_t)
-JUTIL_intrin(bswap, __builtin_bswap32, uint32_t)
-JUTIL_intrin(bswap, __builtin_bswap64, uint64_t)
-JUTIL_intrin(bsr, 63 ^ __builtin_clzl, unsigned long)
-JUTIL_intrin(bsr, 31 ^ __builtin_clz, unsigned int)
+[[nodiscard]] JUTIL_intrin(ffs, __builtin_ffs, int)
+[[nodiscard]] JUTIL_intrin(clz, __builtin_clz, unsigned int)
+[[nodiscard]] JUTIL_intrin(ctz, __builtin_ctz, unsigned int)
+[[nodiscard]] JUTIL_intrin(clrsb, __builtin_clrsb, int)
+[[nodiscard]] JUTIL_intrin(popcount, __builtin_popcount, unsigned int)
+[[nodiscard]] JUTIL_intrin(parity, __builtin_parity, unsigned int)
+[[nodiscard]] JUTIL_intrin(ffs, __builtin_ffsl, long)
+[[nodiscard]] JUTIL_intrin(clz, __builtin_clzl, unsigned long)
+[[nodiscard]] JUTIL_intrin(ctz, __builtin_ctzl, unsigned long)
+[[nodiscard]] JUTIL_intrin(clrsb, __builtin_clrsbl, long)
+[[nodiscard]] JUTIL_intrin(popcount, __builtin_popcountl, unsigned long)
+[[nodiscard]] JUTIL_intrin(parity, __builtin_parityl, unsigned long)
+[[nodiscard]] JUTIL_intrin(ffs, __builtin_ffsll, long long)
+[[nodiscard]] JUTIL_intrin(clz, __builtin_clzll, unsigned long long)
+[[nodiscard]] JUTIL_intrin(ctz, __builtin_ctzll, unsigned long long)
+[[nodiscard]] JUTIL_intrin(clrsb, __builtin_clrsbll, long long)
+[[nodiscard]] JUTIL_intrin(popcount, __builtin_popcountll, unsigned long long)
+[[nodiscard]] JUTIL_intrin(parity, __builtin_parityll, unsigned long long)
+[[nodiscard]] JUTIL_intrin(powi, __builtin_powi, double, int)
+[[nodiscard]] JUTIL_intrin(powi, __builtin_powif, float, int)
+[[nodiscard]] JUTIL_intrin(powi, __builtin_powil, long double, int)
+[[nodiscard]] JUTIL_intrin(bswap, __builtin_bswap16, uint16_t)
+[[nodiscard]] JUTIL_intrin(bswap, __builtin_bswap32, uint32_t)
+[[nodiscard]] JUTIL_intrin(bswap, __builtin_bswap64, uint64_t)
+[[nodiscard]] JUTIL_intrin(bsr, (CHAR_BIT * sizeof(int) - 1) ^ __builtin_clz, unsigned int)
+[[nodiscard]] JUTIL_intrin(bsr, (CHAR_BIT * sizeof(long) - 1) ^ __builtin_clzl, unsigned long)
+[[nodiscard]] JUTIL_intrin(bsr, (CHAR_BIT * sizeof(long long) - 1) ^ __builtin_clzl, unsigned long long)
+JUTIL_intrin(prefetch, __builtin_prefetch, const void *)
 // clang-format on
 } // namespace intrin
+
+//
+// load
+//
+template <class T>
+requires bit_castable<T, std::array<char, sizeof(T)>>
+constexpr T loadu(const char *p) noexcept
+{
+    if (std::is_constant_evaluated()) {
+        alignas(T) std::array<char, sizeof(T)> buf{};
+        std::copy_n(p, sizeof(T), buf.begin());
+        return std::bit_cast<T>(buf);
+    } else {
+        alignas(T) std::array<char, sizeof(T)> buf;
+        std::copy_n(p, sizeof(T), buf.begin());
+        return std::bit_cast<T>(buf);
+    }
+}
 
 //
 // call
@@ -700,7 +725,7 @@ template <class RetTy = std::size_t, bool Trim = true, std::random_access_iterat
     const auto n = static_cast<RetTy>(l - f);
     RetTy i      = 1;
     while (i < n) {
-        JUTIL_PREFETCH(f + i * (hardware_destructive_interference_size / sizeof(f[i])));
+        prefetch(f + i * (hardware_destructive_interference_size / sizeof(f[i])));
         i = i * 2 + comp(proj(f[i]), x);
     }
     return Trim ? CHECK(i >> __builtin_ffs(~i), > 0, < n) : i;
@@ -849,14 +874,18 @@ constexpr inline getter<1> snd{};
 constexpr inline auto abs_ = L(x < 0 ? -x : x);
 
 #define FREF(F, ...)                                                                               \
-    []<class... CAT(Ts, __LINE__)>(CAT(Ts, __LINE__) && ...CAT(xs, __LINE__)) noexcept(            \
-        noexcept(F(                                                                                \
-            __VA_ARGS__ __VA_OPT__(, ) static_cast<CAT(Ts, __LINE__) &&>(CAT(xs, __LINE__))...)))  \
-        ->decltype(F(                                                                              \
-            __VA_ARGS__ __VA_OPT__(, ) static_cast<CAT(Ts, __LINE__) &&>(CAT(xs, __LINE__))...))   \
+    []<class... BOOST_PP_CAT(Ts, __LINE__)>(                                                       \
+        BOOST_PP_CAT(Ts, __LINE__) &&                                                              \
+        ...BOOST_PP_CAT(xs,                                                                        \
+                        __LINE__)) noexcept(noexcept(F(__VA_ARGS__                                 \
+                                                           __VA_OPT__(, ) static_cast<             \
+                                                               BOOST_PP_CAT(Ts, __LINE__) &&>(     \
+                                                               BOOST_PP_CAT(xs, __LINE__))...)))   \
+        ->decltype(F(__VA_ARGS__ __VA_OPT__(, ) static_cast<BOOST_PP_CAT(Ts, __LINE__) &&>(        \
+            BOOST_PP_CAT(xs, __LINE__))...))                                                       \
     {                                                                                              \
-        return F(                                                                                  \
-            __VA_ARGS__ __VA_OPT__(, ) static_cast<CAT(Ts, __LINE__) &&>(CAT(xs, __LINE__))...);   \
+        return F(__VA_ARGS__ __VA_OPT__(, ) static_cast<BOOST_PP_CAT(Ts, __LINE__) &&>(            \
+            BOOST_PP_CAT(xs, __LINE__))...);                                                       \
     }
 
 template <class InitT, sr::input_range R, class F>

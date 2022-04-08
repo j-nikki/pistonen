@@ -5,8 +5,9 @@
             "name": "(gdb) launch",
             "type": "cppdbg",
             "request": "launch",
-            "program": "${workspaceFolder}/out/build/src/pistonen-test",
+            "program": "${workspaceFolder}/build/src/server",
             "args": [
+                "${workspaceFolder}/own/vocab.gz",
                 "3000"
             ],
             "stopAtEntry": false,

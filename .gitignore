@@ -53,3 +53,4 @@ own/
 .cpreset
 .ts
 CMakeUserPresets.json
+build/

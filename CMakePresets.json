@@ -4,9 +4,9 @@
         {
             "name": "base",
             "generator": "Ninja",
-            "binaryDir": "${sourceDir}/out/build",
+            "binaryDir": "${sourceDir}/build",
             "cacheVariables": {
-                "CMAKE_CXX_FLAGS": "-fdiagnostics-color=always -fverbose-asm -masm=intel -march=native -Wpedantic -Wall -Wextra -Wduplicated-cond -Wduplicated-branches -Wlogical-op -Wrestrict -Wnull-dereference -Wold-style-cast -Wuseless-cast -Wdouble-promotion -Wshadow -Wformat=2 -Wno-missing-field-initializers -Wno-comment",
+                "CMAKE_CXX_FLAGS": "-std=c++2b -fdiagnostics-color=always -fverbose-asm -masm=intel -march=native -Wpedantic -Wall -Wextra -Wduplicated-cond -Wduplicated-branches -Wlogical-op -Wrestrict -Wnull-dereference -Wold-style-cast -Wuseless-cast -Wdouble-promotion -Wshadow -Wformat=2 -Wno-missing-field-initializers -Wno-comment",
                 "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
             }
         },
@@ -15,7 +15,7 @@
             "name": "debug",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Debug",
-                "CMAKE_CXX_FLAGS_DEBUG": "-ggdb3 -O0"
+                "CMAKE_CXX_FLAGS_DEBUG": "-g3 -ggdb3 -O0"
             }
         },
         {
@@ -43,7 +43,7 @@
         {
             "inherits": "base",
             "name": "test",
-            "targets": "pistonen-test"
+            "targets": "server"
         }
     ]
 }

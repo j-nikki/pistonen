@@ -6,10 +6,12 @@
 #include <boost/preprocessor/variadic/size.hpp>
 #include <concepts>
 #include <coroutine>
+#include <experimental/memory>
 #include <fcntl.h>
 #include <netinet/in.h>
 #include <numeric>
 #include <ranges>
+#include <span>
 #include <stdio.h>
 #include <sys/epoll.h>
 #include <sys/socket.h>
@@ -25,16 +27,16 @@ namespace pnen::detail
 {
 using namespace jutil;
 
-#define PNEN_push_diag(x) _Pragma("GCC diagnostic push") x
-#define PNEN_pop_diag() _Pragma("GCC diagnostic pop")
+#define PNEN_push_diag(x)     _Pragma("GCC diagnostic push") x
+#define PNEN_pop_diag()       _Pragma("GCC diagnostic pop")
 
 #define PNEN_wno_unused_value _Pragma("GCC diagnostic ignored \"-Wunused-value\"")
 
-[[noreturn]] void error(const char *msg)
-{
-    perror(msg);
-    exit(EXIT_FAILURE);
-}
+//[[noreturn]] void error(const char *msg)
+//{
+//    perror(msg);
+//    exit(EXIT_FAILURE);
+//}
 
 #if !defined(NDEBUG) && !defined(__INTELLISENSE__)
 #define PNEN_assume(E) CHECK(E)
@@ -150,7 +152,7 @@ struct socket {
     };
     struct read_res : read_state {
         JUTIL_INLINE has_next_awaitable has_next() noexcept { return {*this}; }
-        JUTIL_INLINE std::tuple<std::string_view, read_state &> next() noexcept
+        JUTIL_INLINE std::tuple<std::span<char>, read_state &> next() noexcept
         {
             return {{buf, bufspn}, {*this}};
         }
@@ -186,9 +188,9 @@ struct run_server_options {
 };
 
 template <class F, class... Args>
-using promisety = std::coroutine_traits<call_result<F, Args...>, Args...>::promise_type;
+using promisety = typename std::coroutine_traits<call_result<F, Args...>, Args...>::promise_type;
 template <class F, class... Args>
-using crhdlty = std::coroutine_handle<typename promisety<F, Args...>::promise_type>;
+using crhdlty = typename std::coroutine_handle<typename promisety<F, Args...>::promise_type>;
 
 template <callable_r<task, socket &&> Task>
 JUTIL_INLINE void run_server(const run_server_options o, Task on_accept)
