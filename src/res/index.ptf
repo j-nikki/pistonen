@@ -1,0 +1,15 @@
+:=db{}
+    [x]=(await fetch(`api/${x}`)).json()
+
+<div> ...<p>`${map(db["clients"], []"name")}`
+
+[N]B map(xs:A[N], f:B(A)) = ...f(xs)
+fix(f) = (Xs... xs) => f(fix(f), xs...)
+
+rep(T i) = fix((F f, T j) => [j,(j<i ? f(j+1) : [])...])(0)
+
+infix((A,B) f) = ((A a)(B b) => f(a, b))
+
+# matrix product
+[N][M]<<A>+B> ([N][P]A a)*([P][M]B b) =
+    (<_...K>=>(=>(a[{K}/N,]*b[,{K}%N])+...)()...)(<[..N*M]...>)

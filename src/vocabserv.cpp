@@ -48,7 +48,7 @@ JUTIL_INLINE const char *get_pass(char (&buf)[N], const char *prompt) noexcept
     return get_pass(buf, N, prompt);
 }
 
-int main(int argc, char **argv)
+int main(int /*argc*/, char ** /*argv*/)
 {
     using options::help;
     using options::strs;
@@ -102,11 +102,11 @@ int main(int argc, char **argv)
         DBGEXPR(printf("server will run on https://localhost:%hu...\n", opts.hostport));
         pnen::run_server(opts, handle_connection);
 
-        return 0;
-    } catch (const std::exception &e) {
-        fprintf(stderr, "%s: exception occurred: %s\n", argv[0], e.what());
-        return 1;
-    }
+    //     return 0;
+    // } catch (const std::exception &e) {
+    //     fprintf(stderr, "%s: exception occurred: %s\n", argv[0], e.what());
+    //     return 1;
+    // }
 }
 
 bool detail::vocab::init(const char *path)
