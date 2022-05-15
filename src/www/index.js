@@ -2,6 +2,9 @@ const tbl = document.getElementById('tbl').firstChild;
 const search = document.getElementById('search');
 const status = document.getElementById('status');
 
+let password = sessionStorage.getItem('password');
+
+
 function debounce(func, timeout = 225) {
     let timer;
     return (...args) => {

@@ -11,12 +11,14 @@ namespace sf = std::filesystem;
 
 detail::log g_log;
 detail::vocab g_vocab;
+const char *g_wwwroot;
 
 int main(int argc, char **argv)
 {
     try {
         if (argc < 2) {
-            fprintf(stderr, "usage: %s <vocab-path> [<port-num>] [<log-dir>]\n", argv[0]);
+            fprintf(stderr, "usage: %s <vocab-path> [<port-num>] [<www-root>] [<log-dir>]\n",
+                    argv[0]);
             return 1;
         }
 
@@ -31,10 +33,12 @@ int main(int argc, char **argv)
             return 1;
         }
 
-        if (argc < 4)
+        g_wwwroot = (argc < 4) ? "." : argv[3];
+
+        if (argc < 5) {
             g_log.init();
-        else if (!g_log.init(argv[3])) {
-            fprintf(stderr, "couldn't open log file \"%s\"\n", argv[3]);
+        } else if (!g_log.init(argv[4])) {
+            fprintf(stderr, "couldn't open log file \"%s\"\n", argv[4]);
             return 1;
         }
 
@@ -64,6 +68,7 @@ bool detail::vocab::init(const char *path)
 
 bool detail::log::init(const char *dir)
 {
+    // TODO: replace id with timestamp
     const auto id = static_cast<std::size_t>(
         std::distance(sf::directory_iterator{dir}, sf::directory_iterator{}));
     char path[64];

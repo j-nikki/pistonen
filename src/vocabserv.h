@@ -39,3 +39,4 @@ struct log {
 
 extern detail::log g_log;
 extern detail::vocab g_vocab;
+extern const char *g_wwwroot;

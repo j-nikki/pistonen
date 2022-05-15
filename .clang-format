@@ -9,3 +9,9 @@ BinPackParameters: true
 ForEachMacros: ['FOR_CO_AWAIT']
 AlignConsecutiveMacros: AcrossEmptyLinesAndComments
 AllowShortCaseLabelsOnASingleLine: true
+BreakBeforeBraces: Custom
+BraceWrapping:
+  AfterFunction: true
+  AfterNamespace: true
+  AfterClass: true
+  SplitEmptyRecord: false

@@ -17,8 +17,7 @@
 namespace format
 {
 namespace sc = std::chrono;
-struct hdr_time {
-};
+struct hdr_time {};
 
 namespace detail
 {
@@ -61,7 +60,7 @@ concept custom_formatable = requires(char *d_f, const T &x) {
     { format::formatter<std::remove_cvref_t<T>>::maxsz(x) } noexcept -> std::same_as<std::size_t>;
 };
 template <class T>
-concept lazyarg = requires(const T &x, const char *p) {
+concept lazyarg = requires(const T &x, char *p) {
     { x.size() } noexcept -> std::same_as<std::size_t>;
     { x.write(p) } noexcept -> std::same_as<char *>;
 };
@@ -69,7 +68,7 @@ concept lazyarg = requires(const T &x, const char *p) {
 
 template <lazyarg T>
 struct formatter<T> {
-    static char *format(const char *d_f, const T &x) noexcept { return x.write(d_f); }
+    static char *format(char *d_f, const T &x) noexcept { return x.write(d_f); }
     static std::size_t maxsz(const T &x) noexcept { return x.size(); }
 };
 
@@ -90,7 +89,7 @@ struct format_impl {
     static JUTIL_INLINE char *format(char *const d_f, const char (&x)[N], Rest &&...rest) noexcept
     {
         memcpy(d_f, x, N - 1);
-        return format_impl ::format(d_f + (N - 1), static_cast<Rest &&>(rest)...);
+        return format_impl::format(d_f + (N - 1), static_cast<Rest &&>(rest)...);
     }
 
     template <std::size_t N, class... Rest>

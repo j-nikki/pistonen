@@ -6,7 +6,14 @@ cmake_minimum_required(VERSION 3.20)
 
 find_package(magic_enum CONFIG REQUIRED)
 find_path(BOOST_PREPROCESSOR_INCLUDE_DIR NAMES "boost/preprocessor.hpp" REQUIRED)
+find_path(BOOST_ITERATOR_INCLUDE_DIR NAMES "boost/iterator.hpp" REQUIRED)
+find_path(BOOST_VARIANT2_INCLUDE_DIR NAMES "boost/variant2.hpp" REQUIRED)
 find_package(range-v3 CONFIG REQUIRED)
+find_package(robin_hood CONFIG REQUIRED)
+find_package(pegtl CONFIG REQUIRED)
+
+# find_package(Boost REQUIRED [COMPONENTS <libs>...])
+# target_link_libraries(main PRIVATE Boost::boost Boost::<lib1> Boost::<lib2> ...)
 
 #
 # populate ${CMAKE_CURRENT_BINARY_DIR}/include
@@ -14,7 +21,7 @@ find_package(range-v3 CONFIG REQUIRED)
 
 file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/include")
 find_package(Python COMPONENTS Interpreter)
-set(resfiles "res/index.html" "res/reset.css" "res/index.js" "res/index.css")
+set(resfiles "res/index.html" "res/reset.css" "res/index.css")
 add_custom_command(
   OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/include/res.h"
          "${CMAKE_CURRENT_BINARY_DIR}/include/res.cpp"
@@ -28,10 +35,9 @@ add_custom_command(
 # server target
 #
 
-add_executable(server "${CMAKE_CURRENT_BINARY_DIR}/include/res.cpp" "server.cpp" "message.cpp" "vocabserv.cpp" "format.cpp" "buffer.cpp")
+add_executable(server "${CMAKE_CURRENT_BINARY_DIR}/include/res.cpp" "server.cpp" "message.cpp" "vocabserv.cpp" "format.cpp" "buffer.cpp" "ptf.cpp")
 
 target_include_directories(
-    server
-  PRIVATE ${BOOST_ASIO_INCLUDE_DIRS} "${PROJECT_SOURCE_DIR}/include"
-          ${BOOST_HANA_INCLUDE_DIRS} "${CMAKE_CURRENT_BINARY_DIR}/include")
-target_link_libraries(server PRIVATE magic_enum::magic_enum)
+  server
+  PRIVATE "${BOOST_VARIANT2_INCLUDE_DIR}" "${BOOST_PREPROCESSOR_INCLUDE_DIR}" "${BOOST_ITERATOR_INCLUDE_DIR}" "${PROJECT_SOURCE_DIR}/include" "${CMAKE_CURRENT_BINARY_DIR}/include")
+target_link_libraries(server PRIVATE magic_enum::magic_enum taocpp::pegtl robin_hood::robin_hood)

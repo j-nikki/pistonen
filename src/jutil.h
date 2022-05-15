@@ -16,16 +16,23 @@
 #include <cassert>
 #include <concepts>
 #include <limits.h>
+#include <memory>
 #include <new>
 #include <ranges>
 #include <span>
 #include <type_traits>
+#include <utility>
 #include <x86intrin.h>
 
 #include "lmacro_begin.h"
 
 namespace jutil
 {
+#ifdef __cpp_if_consteval
+#define JUTIL_CONSTEVAL consteval
+#else
+#define JUTIL_CONSTEVAL (std::is_constant_evaluated())
+#endif
 #ifdef __cpp_lib_hardware_interference_size
 using std::hardware_constructive_interference_size;
 using std::hardware_destructive_interference_size;
@@ -92,28 +99,18 @@ constexpr To opaque_cast(From &x) noexcept
 #define WSTRINGIFY(X) JUTIL_wstr_exp(X)
 #define DEFER         const auto BOOST_PP_CAT(__defer_, __LINE__) = jutil::impl::deferty{} =
 
+#define JUTIL_NO_DEFAULT()                                                                         \
+    default:                                                                                       \
+        std::unreachable();
 #ifdef _MSC_VER
 #define JUTIL_INLINE   inline __forceinline
 #define JUTIL_NOINLINE __declspec(noinline)
 #define JUTIL_TRAP()   __debugbreak()
-#define JUTIL_NO_DEFAULT()                                                                         \
-    default:                                                                                       \
-        __assume(0)
 #else
-#define JUTIL_INLINE          inline __attribute__((always_inline))
-#define JUTIL_NOINLINE        __attribute__((noinline))
-#define JUTIL_pd_exp(D1, ...) D1 __VA_OPT__(JUTIL_pd_exp(__VA_ARGS__))
-#ifdef __clang__
-#define JUTIL_PUSH_DIAG(...)
-#define JUTIL_POP_DIAG()
-#define JUTIL_WNO_UNUSED_VALUE
-#define JUTIL_WNO_UNUSED_PARAM
-#define JUTIL_WNO_SHADOW
-#define JUTIL_WNO_PARENTHESES
-#define JUTIL_WNO_SEQUENCE
-#define JUTIL_WNO_CCAST
-#elif defined(__GNUC__) || defined(__GNUG__)
-#define JUTIL_PUSH_DIAG(...)   _Pragma("GCC diagnostic push") JUTIL_pd_exp(__VA_ARGS__)
+#define JUTIL_INLINE   inline __attribute__((always_inline))
+#define JUTIL_NOINLINE __attribute__((noinline))
+#if defined(__GNUC__) || defined(__GNUG__)
+#define JUTIL_PUSH_DIAG(X)     _Pragma("GCC diagnostic push") X
 #define JUTIL_POP_DIAG()       _Pragma("GCC diagnostic pop")
 #define JUTIL_WNO_UNUSED_VALUE _Pragma("GCC diagnostic ignored \"-Wunused-value\"")
 #define JUTIL_WNO_UNUSED_PARAM _Pragma("GCC diagnostic ignored \"-Wunused-parameter\"")
@@ -125,10 +122,8 @@ constexpr To opaque_cast(From &x) noexcept
 #error "unsupported compiler"
 #endif
 #define JUTIL_TRAP() __builtin_trap()
-#define JUTIL_NO_DEFAULT()                                                                         \
-    default:                                                                                       \
-        __builtin_unreachable()
 #endif
+#define JUTIL_CI constexpr JUTIL_INLINE
 
 #ifndef NDEBUG
 #define DBGEXPR(...)  __VA_ARGS__
@@ -168,9 +163,9 @@ constexpr To opaque_cast(From &x) noexcept
     })()
 #define JUTIL_c_exp_fold_op(d, acc, x) JUTIL_c_impl(acc, x, BOOST_PP_CAT(msg, __LINE__))
 #define JUTIL_c_exp_fold(E, For0, ...)                                                             \
-    [&]<class BOOST_PP_CAT(JaeT, __LINE__)>(BOOST_PP_CAT(JaeT, __LINE__) &&                        \
-                                            BOOST_PP_CAT(e, __LINE__)) -> BOOST_PP_CAT(JaeT,       \
-                                                                                       __LINE__) { \
+    ([&]<class BOOST_PP_CAT(JaeT, __LINE__)>(                                                      \
+         BOOST_PP_CAT(JaeT, __LINE__) && BOOST_PP_CAT(e, __LINE__)) -> BOOST_PP_CAT(JaeT,          \
+                                                                                    __LINE__) {    \
         JUTIL_PUSH_DIAG(JUTIL_WNO_SHADOW);                                                         \
         static constexpr auto BOOST_PP_CAT(msg, __LINE__) = #E;                                    \
         return BOOST_PP_SEQ_FOLD_LEFT(                                                             \
@@ -178,7 +173,7 @@ constexpr To opaque_cast(From &x) noexcept
             JUTIL_c_impl(BOOST_PP_CAT(e, __LINE__), For0, BOOST_PP_CAT(msg, __LINE__)),            \
             BOOST_PP_VARIADIC_TO_SEQ(__VA_ARGS__));                                                \
         JUTIL_POP_DIAG()                                                                           \
-    }(E)
+    })(E)
 #define JUTIL_c_exp(E, For0, ...)                                                                  \
     BOOST_PP_IF(BOOST_PP_CHECK_EMPTY(__VA_ARGS__), JUTIL_c_impl, JUTIL_c_exp_fold)                 \
     (E, For0, __VA_ARGS__)
@@ -218,17 +213,15 @@ struct [[nodiscard]] curry<F, std::index_sequence<Is...>, Ts...> {
     std::tuple<Ts...> xs_;
 
     template <class... Us>
-    requires(is_callable<F, Ts &&..., Us &&...>) constexpr JUTIL_INLINE auto
-    operator()(Us &&...ys) noexcept(noexcept(f_(std::get<Is>(std::move(xs_))...,
-                                                static_cast<Us &&>(ys)...)))
+    requires(is_callable<F, Ts &&..., Us &&...>) JUTIL_CI auto operator()(Us &&...ys) noexcept(
+        noexcept(f_(std::get<Is>(std::move(xs_))..., static_cast<Us &&>(ys)...)))
         -> decltype(f_(std::get<Is>(std::move(xs_))..., static_cast<Us &&>(ys)...))
     {
         return f_(std::get<Is>(std::move(xs_))..., static_cast<Us &&>(ys)...);
     }
 
     template <class... Us>
-    requires(is_callable<F, const Ts &..., Us &&...>) constexpr JUTIL_INLINE auto
-    operator()(Us &&...ys) const
+    requires(is_callable<F, const Ts &..., Us &&...>) JUTIL_CI auto operator()(Us &&...ys) const
         noexcept(noexcept(f_(std::get<Is>(xs_)..., static_cast<Us &&>(ys)...)))
             -> decltype(f_(std::get<Is>(xs_)..., static_cast<Us &&>(ys)...))
     {
@@ -236,19 +229,19 @@ struct [[nodiscard]] curry<F, std::index_sequence<Is...>, Ts...> {
     }
 
     template <class... Us>
-    requires(!is_callable<F, Ts &&..., Us &&...>) constexpr JUTIL_INLINE
-        curry<F, std::index_sequence_for<Ts..., Us...>, Ts..., Us...>
-        operator()(Us &&...ys) noexcept(
-            noexcept(curry<F, std::index_sequence_for<Ts..., Us...>, Ts..., Us...>{
-                std::move(f_), {std::get<Is>(std::move(xs_))..., static_cast<Us &&>(ys)...}}))
+    requires(!is_callable<F, Ts &&..., Us &&...>)
+        JUTIL_CI curry<F, std::index_sequence_for<Ts..., Us...>, Ts..., Us...>
+    operator()(Us &&...ys) noexcept(
+        noexcept(curry<F, std::index_sequence_for<Ts..., Us...>, Ts..., Us...>{
+            std::move(f_), {std::get<Is>(std::move(xs_))..., static_cast<Us &&>(ys)...}}))
     {
         return {std::move(f_), {std::get<Is>(std::move(xs_))..., static_cast<Us &&>(ys)...}};
     }
 
     template <class... Us>
-    requires(!is_callable<F, const Ts &..., Us &&...>) constexpr JUTIL_INLINE
-        curry<F, std::index_sequence_for<Ts..., Us...>, Ts..., Us...>
-        operator()(Us &&...ys) const
+    requires(!is_callable<F, const Ts &..., Us &&...>)
+        JUTIL_CI curry<F, std::index_sequence_for<Ts..., Us...>, Ts..., Us...>
+    operator()(Us &&...ys) const
         noexcept(noexcept(curry<F, std::index_sequence_for<Ts..., Us...>, Ts..., Us...>{
             std::move(f_), {std::get<Is>(xs_)..., static_cast<Us &&>(ys)...}}))
     {
@@ -269,17 +262,17 @@ constexpr inline auto slc_b = J == npos ? (I < 0 ? N + I : I) : (J < 0 ? N + J :
 template <std::ptrdiff_t I, std::ptrdiff_t J, class T, std::size_t N>
 using slcty = std::span<T, slc_b<I, J, N> - slc_a<I, J, N>>;
 template <std::ptrdiff_t I, std::ptrdiff_t J = npos, class T, std::size_t N>
-constexpr JUTIL_INLINE slcty<I, J, const T, N> slice(const std::array<T, N> &arr) noexcept
+JUTIL_CI slcty<I, J, const T, N> slice(const std::array<T, N> &arr) noexcept
 {
     return slcty<I, J, const T, N>{&arr[slc_a<I, J, N>], &arr[slc_b<I, J, N>]};
 }
 template <std::ptrdiff_t I, std::ptrdiff_t J = npos, class T, std::size_t N>
-constexpr JUTIL_INLINE slcty<I, J, T, N> slice(std::array<T, N> &arr) noexcept
+JUTIL_CI slcty<I, J, T, N> slice(std::array<T, N> &arr) noexcept
 {
     return slcty<I, J, T, N>{&arr[slc_a<I, J, N>], &arr[slc_b<I, J, N>]};
 }
 
-constexpr JUTIL_INLINE std::size_t operator""_uz(unsigned long long int x) noexcept
+JUTIL_CI std::size_t operator""_uz(unsigned long long int x) noexcept
 {
     return static_cast<std::size_t>(x);
 }
@@ -327,7 +320,7 @@ static_assert(constant_sized_input_range<const int (&)[5]>);
 template <sr::random_access_range R, class Comp, class Proj>
 requires(std::sortable<sr::iterator_t<R>, Comp, Proj> &&requires(R r) {
     sr::size(r);
-}) constexpr JUTIL_INLINE sr::iterator_t<R> sort_until_snt(R &&r, Comp comp, Proj proj, auto pred)
+}) JUTIL_CI sr::iterator_t<R> sort_until_snt(R &&r, Comp comp, Proj proj, auto pred)
 {
     const auto l = sr::next(sr::begin(r), sr::size(r) - 1);
     for (auto it = sr::begin(r);; ++it, assert(it != sr::end(r)))
@@ -337,8 +330,7 @@ requires(std::sortable<sr::iterator_t<R>, Comp, Proj> &&requires(R r) {
 template <sr::random_access_range R, class Comp, class Proj, class Pred, class Snt>
 requires(std::sortable<sr::iterator_t<R>, Comp, Proj> &&requires(R r) {
     sr::size(r);
-}) constexpr JUTIL_INLINE sr::iterator_t<R> sort_until_snt(R &&r, Comp comp, Proj proj, Pred pred,
-                                                           Snt &&snt)
+}) JUTIL_CI sr::iterator_t<R> sort_until_snt(R &&r, Comp comp, Proj proj, Pred pred, Snt &&snt)
 {
     *sr::next(sr::begin(r), sr::size(r) - 1) = static_cast<Snt &&>(snt);
     return sort_until_snt(r, comp, proj, pred, snt);
@@ -346,7 +338,7 @@ requires(std::sortable<sr::iterator_t<R>, Comp, Proj> &&requires(R r) {
 
 template <std::size_t NTypes, class TCnt = std::size_t, sr::input_range R,
           class Proj = std::identity>
-[[nodiscard]] constexpr JUTIL_INLINE std::array<TCnt, NTypes>
+[[nodiscard]] JUTIL_CI std::array<TCnt, NTypes>
 counts(R &&r, Proj proj = {}) noexcept(noexcept(proj(*sr::begin(r))))
 {
     std::array<TCnt, NTypes> cnts{};
@@ -361,8 +353,7 @@ counts(R &&r, Proj proj = {}) noexcept(noexcept(proj(*sr::begin(r))))
 namespace impl
 {
 template <std::size_t I>
-constexpr JUTIL_INLINE auto find_if_unrl(auto &r, auto it,
-                                         auto pred) noexcept(noexcept(pred(*sr::next(it))))
+JUTIL_CI auto find_if_unrl(auto &r, auto it, auto pred) noexcept(noexcept(pred(*sr::next(it))))
 {
     if constexpr (!I)
         return sr::end(r);
@@ -372,8 +363,7 @@ constexpr JUTIL_INLINE auto find_if_unrl(auto &r, auto it,
         return find_if_unrl<I - 1>(r, sr::next(it), pred);
 }
 template <std::size_t I>
-constexpr JUTIL_INLINE auto find_unrl(auto &r, auto it,
-                                      const auto &x) noexcept(noexcept(*sr::next(it) == x))
+JUTIL_CI auto find_unrl(auto &r, auto it, const auto &x) noexcept(noexcept(*sr::next(it) == x))
 {
     if constexpr (!I)
         return sr::end(r);
@@ -384,26 +374,26 @@ constexpr JUTIL_INLINE auto find_unrl(auto &r, auto it,
 }
 } // namespace impl
 template <borrowed_constant_sized_range R, class Pred>
-[[nodiscard]] constexpr JUTIL_INLINE sr::iterator_t<R>
+[[nodiscard]] JUTIL_CI sr::iterator_t<R>
 find_if_unrl(R &&r,
              Pred pred) noexcept(noexcept(impl::find_if_unrl<csr_sz<R>()>(r, sr::begin(r), pred)))
 {
     return impl::find_if_unrl<csr_sz<R>()>(r, sr::begin(r), pred);
 }
 template <borrowed_constant_sized_range R>
-[[nodiscard]] constexpr JUTIL_INLINE sr::iterator_t<R>
+[[nodiscard]] JUTIL_CI sr::iterator_t<R>
 find_unrl(R &&r, const auto &x) noexcept(noexcept(impl::find_unrl<csr_sz<R>()>(r, sr::begin(r), x)))
 {
     return impl::find_unrl<csr_sz<R>()>(r, sr::begin(r), x);
 }
 template <borrowed_constant_sized_range R>
-[[nodiscard]] constexpr JUTIL_INLINE std::size_t
+[[nodiscard]] JUTIL_CI std::size_t
 find_unrl_idx(R &&r, const auto &x) noexcept(noexcept(sr::distance(sr::begin(r), find_unrl(r, x))))
 {
     return static_cast<std::size_t>(sr::distance(sr::begin(r), find_unrl(r, x)));
 }
 template <borrowed_constant_sized_range R>
-[[nodiscard]] constexpr JUTIL_INLINE std::size_t
+[[nodiscard]] JUTIL_CI std::size_t
 find_if_unrl_idx(R &&r,
                  auto pred) noexcept(noexcept(sr::distance(sr::begin(r), find_if_unrl(r, pred))))
 {
@@ -415,12 +405,12 @@ find_if_unrl_idx(R &&r,
 //
 template <std::size_t N, std::size_t Pad = 0, bool InitPad = true, sr::input_range R,
           callable<std::size_t, sr::range_reference_t<R>> F>
-[[nodiscard]] constexpr JUTIL_INLINE auto map_n(R &&r, F f) noexcept(
+[[nodiscard]] JUTIL_CI auto map_n(R &&r, F f) noexcept(
     noexcept(std::decay_t<decltype(f(0_uz, *sr::begin(r)))>{f(0_uz, *sr::begin(r))}))
     -> std::array<std::decay_t<decltype(f(0_uz, *sr::begin(r)))>, N + Pad>
 {
     using OEl = std::decay_t<decltype(f(0_uz, *sr::begin(r)))>;
-    if (std::is_constant_evaluated()) {
+    if JUTIL_CONSTEVAL {
         std::array<OEl, N + Pad> res{};
         auto i = 0_uz;
         for (sr::range_reference_t<R> x : static_cast<R &&>(r))
@@ -438,13 +428,13 @@ template <std::size_t N, std::size_t Pad = 0, bool InitPad = true, sr::input_ran
 }
 template <std::size_t N, std::size_t Pad = 0, bool InitPad = true, sr::input_range R,
           callable<sr::range_reference_t<R>> F = std::identity>
-[[nodiscard]] constexpr JUTIL_INLINE auto
+[[nodiscard]] JUTIL_CI auto
 map_n(R &&r,
       F f = {}) noexcept(noexcept(std::decay_t<decltype(f(*sr::begin(r)))>{f(*sr::begin(r))}))
     -> std::array<std::decay_t<decltype(f(*sr::begin(r)))>, N + Pad>
 {
     using OEl = std::decay_t<decltype(f(*sr::begin(r)))>;
-    if (std::is_constant_evaluated()) {
+    if JUTIL_CONSTEVAL {
         std::array<OEl, N + Pad> res{};
         auto i = 0_uz;
         for (sr::range_reference_t<R> x : static_cast<R &&>(r))
@@ -461,7 +451,7 @@ map_n(R &&r,
     }
 }
 template <std::size_t Pad = 0, bool InitPad = true, constant_sized_input_range R>
-[[nodiscard]] constexpr JUTIL_INLINE auto
+[[nodiscard]] JUTIL_CI auto
 map(R &&r, auto f) noexcept(noexcept(map_n<csr_sz<R>(), Pad, InitPad>(static_cast<R &&>(r), f)))
     -> decltype(map_n<csr_sz<R>(), Pad, InitPad>(static_cast<R &&>(r), f))
 {
@@ -485,15 +475,15 @@ std::make_unsigned_t<T> to_unsigned(T x)
     return static_cast<std::make_unsigned_t<T>>(x);
 }
 
-constexpr JUTIL_INLINE uintptr_t to_uint(void *x) noexcept { return std::bit_cast<uintptr_t>(x); }
-constexpr JUTIL_INLINE void *to_ptr(uintptr_t x) noexcept { return std::bit_cast<void *>(x); }
+JUTIL_CI uintptr_t to_uint(void *x) noexcept { return std::bit_cast<uintptr_t>(x); }
+JUTIL_CI void *to_ptr(uintptr_t x) noexcept { return std::bit_cast<void *>(x); }
 
 //
 // Duff's device
 //
 
 template <std::size_t Factor = 16>
-constexpr JUTIL_INLINE void duffs(std::integral auto n, callable auto &&f) noexcept(noexcept(f()))
+JUTIL_CI void duffs(std::integral auto n, callable auto &&f) noexcept(noexcept(f()))
 {
     if (!n)
         return;
@@ -539,23 +529,23 @@ inline namespace intrin
     JUTIL_intrin_exp(name, iname, BOOST_PP_VARIADIC_TO_SEQ(__VA_ARGS__))
 // clang-format off
 [[nodiscard]] JUTIL_intrin(ffs, __builtin_ffs, int)
+[[nodiscard]] JUTIL_intrin(ffs, __builtin_ffsl, long)
+[[nodiscard]] JUTIL_intrin(ffs, __builtin_ffsll, long long)
 [[nodiscard]] JUTIL_intrin(clz, __builtin_clz, unsigned int)
 [[nodiscard]] JUTIL_intrin(ctz, __builtin_ctz, unsigned int)
 [[nodiscard]] JUTIL_intrin(clrsb, __builtin_clrsb, int)
-[[nodiscard]] JUTIL_intrin(popcount, __builtin_popcount, unsigned int)
-[[nodiscard]] JUTIL_intrin(parity, __builtin_parity, unsigned int)
-[[nodiscard]] JUTIL_intrin(ffs, __builtin_ffsl, long)
-[[nodiscard]] JUTIL_intrin(clz, __builtin_clzl, unsigned long)
-[[nodiscard]] JUTIL_intrin(ctz, __builtin_ctzl, unsigned long)
 [[nodiscard]] JUTIL_intrin(clrsb, __builtin_clrsbl, long)
-[[nodiscard]] JUTIL_intrin(popcount, __builtin_popcountl, unsigned long)
-[[nodiscard]] JUTIL_intrin(parity, __builtin_parityl, unsigned long)
-[[nodiscard]] JUTIL_intrin(ffs, __builtin_ffsll, long long)
-[[nodiscard]] JUTIL_intrin(clz, __builtin_clzll, unsigned long long)
-[[nodiscard]] JUTIL_intrin(ctz, __builtin_ctzll, unsigned long long)
 [[nodiscard]] JUTIL_intrin(clrsb, __builtin_clrsbll, long long)
+[[nodiscard]] JUTIL_intrin(popcount, __builtin_popcount, unsigned int)
+[[nodiscard]] JUTIL_intrin(popcount, __builtin_popcountl, unsigned long)
 [[nodiscard]] JUTIL_intrin(popcount, __builtin_popcountll, unsigned long long)
+[[nodiscard]] JUTIL_intrin(parity, __builtin_parity, unsigned int)
+[[nodiscard]] JUTIL_intrin(parity, __builtin_parityl, unsigned long)
 [[nodiscard]] JUTIL_intrin(parity, __builtin_parityll, unsigned long long)
+[[nodiscard]] JUTIL_intrin(clz, __builtin_clzl, unsigned long)
+[[nodiscard]] JUTIL_intrin(clz, __builtin_clzll, unsigned long long)
+[[nodiscard]] JUTIL_intrin(ctz, __builtin_ctzl, unsigned long)
+[[nodiscard]] JUTIL_intrin(ctz, __builtin_ctzll, unsigned long long)
 [[nodiscard]] JUTIL_intrin(powi, __builtin_powi, double, int)
 [[nodiscard]] JUTIL_intrin(powi, __builtin_powif, float, int)
 [[nodiscard]] JUTIL_intrin(powi, __builtin_powil, long double, int)
@@ -574,9 +564,9 @@ JUTIL_intrin(prefetch, __builtin_prefetch, const void *)
 //
 template <class T>
 requires bit_castable<T, std::array<char, sizeof(T)>>
-constexpr T loadu(const char *p) noexcept
+[[nodiscard]] constexpr T loadu(const char *p) noexcept
 {
-    if (std::is_constant_evaluated()) {
+    if JUTIL_CONSTEVAL {
         alignas(T) std::array<char, sizeof(T)> buf{};
         std::copy_n(p, sizeof(T), buf.begin());
         return std::bit_cast<T>(buf);
@@ -585,6 +575,17 @@ constexpr T loadu(const char *p) noexcept
         std::copy_n(p, sizeof(T), buf.begin());
         return std::bit_cast<T>(buf);
     }
+}
+
+//
+// store
+//
+template <class T>
+requires bit_castable<std::array<char, sizeof(T)>, T>
+constexpr void storeu(auto d_it, const T &val) noexcept
+{
+    const auto buf = std::bit_cast<std::array<char, sizeof(T)>>(val);
+    std::copy_n(buf.begin(), sizeof(T), d_it);
 }
 
 //
@@ -605,6 +606,18 @@ call_while(F &&f, std::predicate<call_result<F &>> auto pr) noexcept(noexcept(pr
     for (;;)
         if (decltype(auto) res = f(); !pr(res))
             return static_cast<decltype(res)>(res);
+}
+template <callable<> F>
+constexpr void call_n(F &&f, std::integral auto n) noexcept(noexcept(f()))
+{
+    while (n--)
+        f();
+}
+template <sr::input_range R, callable<sr::range_value_t<R>> F>
+constexpr void call_with(F &&f, R &&r) noexcept(noexcept(f(*sr::begin(r))))
+{
+    for (auto &&x : static_cast<R &&>(r))
+        f(static_cast<decltype(x) &&>(x));
 }
 
 //
@@ -664,8 +677,7 @@ template <constant_sized_input_range R, class TVal, class Proj = std::identity>
 // swap
 //
 struct iter_swap_t {
-    constexpr JUTIL_INLINE void operator()(auto a, auto b) const
-        noexcept(noexcept(sr::iter_swap(a, b)))
+    JUTIL_CI void operator()(auto a, auto b) const noexcept(noexcept(sr::iter_swap(a, b)))
     {
         sr::iter_swap(a, b);
     }
@@ -702,7 +714,7 @@ push_heap(I f, S l, Comp comp = {}, Proj proj = {},
 //
 template <class IdxTy = std::size_t, std::random_access_iterator I, std::sentinel_for<I> S,
           class Comp = sr::less, class Proj = std::identity>
-[[nodiscard]] constexpr JUTIL_INLINE bool
+[[nodiscard]] JUTIL_CI bool
 is_heap_eytz(I f, S l, Comp comp = {},
              Proj proj = {}) noexcept(noexcept(comp(proj(f[0]), proj(f[0]))))
 {
@@ -718,8 +730,9 @@ is_heap_eytz(I f, S l, Comp comp = {},
 }
 template <class RetTy = std::size_t, bool Trim = true, std::random_access_iterator I,
           std::sentinel_for<I> S, class Comp = sr::less, class Proj = std::identity>
-[[nodiscard]] constexpr JUTIL_INLINE RetTy lower_bound_eytz_idx(
-    I f, S l, const auto &x, Comp comp = {}, Proj proj = {}) noexcept(noexcept(comp(proj(f[1]), x)))
+[[nodiscard]] JUTIL_CI RetTy lower_bound_eytz_idx(I f, S l, const auto &x, Comp comp = {},
+                                                  Proj proj = {}) noexcept(noexcept(comp(proj(f[1]),
+                                                                                         x)))
 {
     CHECK(is_heap_eytz(f, l, comp, proj));
     const auto n = static_cast<RetTy>(l - f);
@@ -732,17 +745,17 @@ template <class RetTy = std::size_t, bool Trim = true, std::random_access_iterat
 }
 template <class IdxTy = std::size_t, std::random_access_iterator I, std::sentinel_for<I> S,
           class Comp = sr::less, class Proj = std::identity>
-[[nodiscard]] constexpr JUTIL_INLINE I
-lower_bound_eytz(I f, S l, const auto &x, Comp comp = {},
-                 Proj proj = {}) noexcept(noexcept(comp(proj(f[1]), proj(f[1]))))
+[[nodiscard]] JUTIL_CI I lower_bound_eytz(I f, S l, const auto &x, Comp comp = {},
+                                          Proj proj = {}) noexcept(noexcept(comp(proj(f[1]),
+                                                                                 proj(f[1]))))
 {
     return f + lower_bound_eytz_idx<IdxTy>(f, l, x, comp, proj);
 }
-JUTIL_PUSH_DIAG(JUTIL_WNO_PARENTHESES, JUTIL_WNO_SEQUENCE)
+JUTIL_PUSH_DIAG(JUTIL_WNO_PARENTHESES JUTIL_WNO_SEQUENCE)
 template <class IdxTy = std::size_t, std::size_t DD = 1, std::random_access_iterator I,
           std::sentinel_for<I> S, class Comp = sr::less, class Proj = std::identity>
-constexpr JUTIL_INLINE void
-push_eytz(I f, S l, Comp comp = {}, Proj proj = {}) noexcept(noexcept(comp(proj(f[1]), proj(f[1]))))
+JUTIL_CI void push_eytz(I f, S l, Comp comp = {},
+                        Proj proj = {}) noexcept(noexcept(comp(proj(f[1]), proj(f[1]))))
 {
     const auto xi = static_cast<IdxTy>(l - f) - 1;
     if (xi == 1)
@@ -772,7 +785,7 @@ JUTIL_POP_DIAG()
 //
 template <sr::random_access_range R, class T, class Proj = std::identity>
 requires std::is_lvalue_reference_v<call_result<Proj &, sr::range_reference_t<R>>>
-[[nodiscard]] constexpr JUTIL_INLINE std::size_t find_always_idx(R &r, const T &x, Proj proj = {})
+[[nodiscard]] JUTIL_CI std::size_t find_always_idx(R &r, const T &x, Proj proj = {})
 {
     const auto it = sr::begin(r);
     for (std::size_t i = 0;; ++i, assert(i != sr::size(r)))
@@ -781,8 +794,7 @@ requires std::is_lvalue_reference_v<call_result<Proj &, sr::range_reference_t<R>
 }
 template <std::input_iterator It, class T, class Proj = std::identity>
 requires std::is_lvalue_reference_v<call_result<Proj &, std::iter_reference_t<It>>>
-[[nodiscard]] constexpr JUTIL_INLINE It find_always(It f, [[maybe_unused]] const It l, const T &x,
-                                                    Proj proj = {})
+[[nodiscard]] JUTIL_CI It find_always(It f, [[maybe_unused]] const It l, const T &x, Proj proj = {})
 {
     while (proj(*f) != x)
         CHECK(f != l), ++f;
@@ -790,34 +802,33 @@ requires std::is_lvalue_reference_v<call_result<Proj &, std::iter_reference_t<It
 }
 template <sr::input_range R, class T, class Proj = std::identity>
 requires std::is_lvalue_reference_v<call_result<Proj &, sr::range_reference_t<R>>>
-[[nodiscard]] constexpr JUTIL_INLINE sr::iterator_t<R> find_always(R &r, const T &x, Proj proj = {})
+[[nodiscard]] JUTIL_CI sr::iterator_t<R> find_always(R &r, const T &x, Proj proj = {})
 {
     return find_always(sr::begin(r), x, proj);
 }
 template <std::random_access_iterator It, class Pred, class Proj = std::identity>
-[[nodiscard]] constexpr JUTIL_INLINE std::size_t
-find_if_always_idx(It f, [[maybe_unused]] const It l, Pred pred, Proj proj = {})
+[[nodiscard]] JUTIL_CI std::size_t find_if_always_idx(It f, [[maybe_unused]] const It l, Pred pred,
+                                                      Proj proj = {})
 {
     for (std::size_t i = 0;; ++i)
         if (CHECK(i != static_cast<std::size_t>(sr::distance(f, l))), pred(proj(f[i])))
             return i;
 }
 template <sr::random_access_range R, class Pred, class Proj = std::identity>
-[[nodiscard]] constexpr JUTIL_INLINE std::size_t find_if_always_idx(R &r, Pred pred, Proj proj = {})
+[[nodiscard]] JUTIL_CI std::size_t find_if_always_idx(R &r, Pred pred, Proj proj = {})
 {
     return find_if_always_idx(sr::begin(r), sr::end(r), pred, proj);
 }
 template <std::input_iterator It, class Proj = std::identity>
-[[nodiscard]] constexpr JUTIL_INLINE It find_if_always(It f, [[maybe_unused]] const It l, auto pred,
-                                                       Proj proj = {})
+[[nodiscard]] JUTIL_CI It find_if_always(It f, [[maybe_unused]] const It l, auto pred,
+                                         Proj proj = {})
 {
     while (!pred(proj(*f)))
         CHECK(f != l), ++f;
     return f;
 }
 template <borrowed_input_range R, class Proj = std::identity>
-[[nodiscard]] constexpr JUTIL_INLINE sr::iterator_t<R> find_if_always(R &&r, auto pred,
-                                                                      Proj proj = {})
+[[nodiscard]] JUTIL_CI sr::iterator_t<R> find_if_always(R &&r, auto pred, Proj proj = {})
 {
     return find_if_always(sr::begin(r), sr::end(r), pred, proj);
 }
@@ -827,7 +838,7 @@ template <borrowed_input_range R, class Proj = std::identity>
 //
 template <std::random_access_iterator It, class T, class Proj = std::identity>
 requires std::is_lvalue_reference_v<call_result<Proj &, std::iter_reference_t<It>>>
-[[nodiscard]] constexpr JUTIL_INLINE It find_snt(It f, const It l, const T &x, Proj proj = {})
+[[nodiscard]] JUTIL_CI It find_snt(It f, const It l, const T &x, Proj proj = {})
 {
     proj(f[l - f - 1]) = x;
     while (proj(*f) != x)
@@ -836,8 +847,7 @@ requires std::is_lvalue_reference_v<call_result<Proj &, std::iter_reference_t<It
 }
 template <std::random_access_iterator It, class T, class Proj = std::identity>
 requires std::is_lvalue_reference_v<call_result<Proj &, std::iter_reference_t<It>>>
-[[nodiscard]] constexpr JUTIL_INLINE It find_if_snt(It f, const It l, auto pred, const T &x,
-                                                    Proj proj = {})
+[[nodiscard]] JUTIL_CI It find_if_snt(It f, const It l, auto pred, const T &x, Proj proj = {})
 {
     proj(f[l - f - 1]) = x;
     while (!pred(proj(*f)))
@@ -846,29 +856,120 @@ requires std::is_lvalue_reference_v<call_result<Proj &, std::iter_reference_t<It
 }
 template <sr::random_access_range R, class T, class Proj = std::identity>
 requires std::is_lvalue_reference_v<call_result<Proj &, sr::range_reference_t<R>>>
-[[nodiscard]] constexpr JUTIL_INLINE sr::iterator_t<R &> find_snt(R &r, const T &x, Proj proj = {})
+[[nodiscard]] JUTIL_CI sr::iterator_t<R &> find_snt(R &r, const T &x, Proj proj = {})
 {
     return find_snt(sr::begin(r), sr::end(r), x, proj);
 }
 template <sr::random_access_range R, class T, class Proj = std::identity>
 requires std::is_lvalue_reference_v<call_result<Proj &, sr::range_reference_t<R>>>
-[[nodiscard]] constexpr JUTIL_INLINE std::size_t find_snt_idx(R &r, const T &x, Proj proj = {})
+[[nodiscard]] JUTIL_CI std::size_t find_snt_idx(R &r, const T &x, Proj proj = {})
 {
     proj(sr::begin(r)[sr::size(r) - 1]) = x;
     return find_always_idx(r, x, proj);
 }
 
+//
+// stack
+//
+namespace detail
+{
+template <class T, T N, T Init>
+struct stack {
+    using value_type = T;
+    JUTIL_CI std::size_t size() const noexcept requires(requires(T x) { bsr(x); })
+    {
+        return x_ ? bsr(x_) / N : 0;
+    }
+    [[nodiscard]] constexpr T peek() const noexcept { return x_ & ((1 << N) - 1); }
+    JUTIL_CI void add(const T x) noexcept { CHECK(peek() + x, < (1 << N)), x_ += x; }
+    JUTIL_CI void sub(const T x) noexcept { CHECK(peek() - x, >= 0), x_ += x; }
+    JUTIL_CI void push(const T x) noexcept { grow(), add(x); }
+    JUTIL_CI void grow() noexcept { x_ <<= N; }
+    JUTIL_CI void shrink() noexcept { x_ >>= N; }
+    [[nodiscard]] std::strong_ordering operator<=>(const stack &rhs) const = default;
+
+  private:
+    T x_ = Init;
+};
+template <class S>
+struct iterator {
+    using value_type      = S::value_type;
+    using difference_type = std::ptrdiff_t;
+    S s;
+    struct end {};
+    JUTIL_CI bool operator==(end) const noexcept { return s == S{}; }
+    JUTIL_CI bool operator!=(end) const noexcept { return s != S{}; }
+    JUTIL_CI bool operator==(iterator) const noexcept { return false; }
+    JUTIL_CI bool operator!=(iterator) const noexcept { return false; }
+    iterator &operator++() noexcept { return s.shrink(), *this; }
+    iterator &operator++(int) noexcept
+    {
+        const auto res = *this;
+        return ++*this, res;
+    }
+    auto operator*() const noexcept -> decltype(s.peek()) { return s.peek(); }
+    auto operator*() noexcept -> decltype(s.peek()) { return s.peek(); }
+};
+} // namespace detail
+template <class T = std::size_t, T N = 8, T Init = 0>
+struct stack : detail::stack<T, N, Init> {
+    using iterator = detail::iterator<detail::stack<T, N, Init>>;
+    JUTIL_CI iterator begin() const noexcept { return {*this}; }
+    JUTIL_CI iterator::end end() const noexcept { return {}; }
+    [[nodiscard]] std::strong_ordering operator<=>(const stack &rhs) const = default;
+
+  private:
+    T x_ = Init;
+};
+
+//
+// overload
+//
+template <class... Fs>
+struct overload : Fs... {
+    using Fs::operator()...;
+};
+template <class... Fs>
+overload(Fs &&...) -> overload<Fs...>;
+
+//
+// fn_it
+//
+template <class F>
+struct fn_it {
+    F f_;
+    using difference_type = std::ptrdiff_t;
+    struct proxy {
+        fn_it &it;
+        template <class T>
+        JUTIL_CI auto operator=(T &&x) const noexcept(noexcept(it.f_(static_cast<T &&>(x))))
+            -> decltype(it.f_(static_cast<T &&>(x)))
+        {
+            return it.f_(static_cast<T &&>(x));
+        }
+    };
+    JUTIL_CI proxy operator*() noexcept { return {*this}; }
+    JUTIL_CI bool operator==(const fn_it &it) const noexcept { return std::addressof(it) == this; }
+    JUTIL_CI bool operator!=(const fn_it &it) const noexcept { return !(*this == it); }
+    JUTIL_CI fn_it &operator++() noexcept { return *this; }
+    JUTIL_CI fn_it operator++(int) noexcept { return {static_cast<F &&>(f_)}; }
+};
+template <class F>
+fn_it(F &&) -> fn_it<F>;
+
+//
+// getter
+//
 template <std::size_t I>
 struct getter {
     template <class T>
-    [[nodiscard]] constexpr JUTIL_INLINE auto operator()(T &&x) const
+    [[nodiscard]] JUTIL_CI auto operator()(T &&x) const
         noexcept(noexcept(std::get<I>(static_cast<T &&>(x))))
             -> decltype(std::get<I>(static_cast<T &&>(x)))
     {
         return std::get<I>(static_cast<T &&>(x));
     }
 };
-
 constexpr inline getter<0> fst{};
 constexpr inline getter<1> snd{};
 constexpr inline auto abs_ = L(x < 0 ? -x : x);
@@ -881,9 +982,8 @@ constexpr inline auto abs_ = L(x < 0 ? -x : x);
                                                            __VA_OPT__(, ) static_cast<             \
                                                                BOOST_PP_CAT(Ts, __LINE__) &&>(     \
                                                                BOOST_PP_CAT(xs, __LINE__))...)))   \
-        ->decltype(F(__VA_ARGS__ __VA_OPT__(, ) static_cast<BOOST_PP_CAT(Ts, __LINE__) &&>(        \
-            BOOST_PP_CAT(xs, __LINE__))...))                                                       \
-    {                                                                                              \
+        -> decltype(F(__VA_ARGS__ __VA_OPT__(, ) static_cast<BOOST_PP_CAT(Ts, __LINE__) &&>(       \
+            BOOST_PP_CAT(xs, __LINE__))...)) {                                                     \
         return F(__VA_ARGS__ __VA_OPT__(, ) static_cast<BOOST_PP_CAT(Ts, __LINE__) &&>(            \
             BOOST_PP_CAT(xs, __LINE__))...);                                                       \
     }
@@ -907,10 +1007,10 @@ constexpr inline auto iota = []<auto... xs>(std::integer_sequence<decltype(A + B
 (std::make_integer_sequence<decltype(A + B), B - A>{});
 
 #define NO_COPY_MOVE(S)                                                                            \
-    S(const S &) = delete;                                                                         \
-    S(S &&)      = delete;                                                                         \
+    S(const S &)            = delete;                                                              \
+    S(S &&)                 = delete;                                                              \
     S &operator=(const S &) = delete;                                                              \
-    S &operator=(S &&) = delete
+    S &operator=(S &&)      = delete
 #define NO_DEF_CTORS(S)                                                                            \
     S()          = delete;                                                                         \
     S(const S &) = delete;                                                                         \

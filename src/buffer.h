@@ -8,14 +8,15 @@
 
 #include "lmacro_begin.h"
 
-struct buffer {
-    static constexpr auto defcap = 4096uz;
+template <class ChTy, std::size_t DefCap>
+struct basic_buffer {
+    static constexpr auto defcap = DefCap;
 
     //
     // DATA RETRIEVAL
     //
     [[nodiscard]] constexpr JUTIL_INLINE std::size_t size() const noexcept { return n_; }
-    [[nodiscard]] JUTIL_INLINE const char *data() const noexcept { return buf_.get(); }
+    [[nodiscard]] JUTIL_INLINE const ChTy *data() const noexcept { return buf_.get(); }
 
     //
     // MODIFICATION
@@ -34,7 +35,7 @@ struct buffer {
             grow<Append>(new_n);
         n_ = static_cast<std::size_t>(fput(&buf_[base], static_cast<Args &&>(args)...) - &buf_[0]);
     }
-
+    
   public:
     template <bool Append = false, class... Args>
     JUTIL_INLINE std::size_t put(Args &&...args)
@@ -44,8 +45,9 @@ struct buffer {
         return n_;
     }
 
-    std::unique_ptr<char[]> buf_ = std::make_unique_for_overwrite<char[]>(defcap);
+    std::unique_ptr<ChTy[]> buf_ = std::make_unique_for_overwrite<ChTy[]>(defcap);
     std::size_t n_ = 0, cap_ = defcap;
 };
+using buffer = basic_buffer<char, 4096>;
 
 #include "lmacro_end.h"

@@ -1,7 +1,8 @@
 #include "buffer.h"
 
+template <class ChTy, std::size_t DefCap>
 template <bool Copy>
-void buffer::grow(std::size_t n)
+void basic_buffer<ChTy, DefCap>::grow(std::size_t n)
 {
     const auto new_cap = std::bit_ceil(n);
     auto new_mem       = std::make_unique_for_overwrite<char[]>(new_cap);
