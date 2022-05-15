@@ -5,6 +5,7 @@
 #include <range/v3/algorithm/copy.hpp>
 #include <range/v3/view/chunk.hpp>
 #include <range/v3/view/transform.hpp>
+#include <robin_hood.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -51,12 +52,6 @@ static constexpr std::string_view mt_ss[]{"text/javascript", "text/css", "text/h
 struct gc_res {
     const std::string_view &type = STATIC_SV(""), &hdr = STATIC_SV("");
 };
-
-template <auto X>
-[[nodiscard]] JUTIL_INLINE constexpr auto &as_static() noexcept
-{
-    return X;
-}
 
 [[nodiscard]] JUTIL_INLINE gc_res serve_api(const string &uri, buffer &body) noexcept
 {
@@ -161,26 +156,54 @@ struct format::formatter<escaped> {
     static std::size_t maxsz(const escaped &e) noexcept { return e.size() * 5; }
 };
 
+//
+// authentication
+//
+
 static constexpr std::string_view b64chars =
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-bool check_auth(std::string_view sv)
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=";
+
+// TODO: remove creds from source code
+robin_hood::unordered_flat_map<std::string_view, std::string_view> g_creds{{"admin", "admin123"}};
+
+bool check_creds(const std::string_view uname, const std::string_view pass) noexcept
 {
-    if (!sv.starts_with("Basic "))
-        return true;
-        
-    char buf[256], *dit = buf;
-    // ICEs:
-    // sv | vv::transform(L(b64chars.find(x)))
-    //    | vv::chunk(4)
-    //    | vv::transform(L(static_cast<char>((x[0] << 192) | (x[1] << 128) | (x[2] << 64) | x[3])))
-    for (auto i = 6uz; i + 4 <= sv.size(); i += 4) {
-        const auto x = sv.data() + i;
-        const auto y = static_cast<char>((x[0] << 192) | (x[1] << 128) | (x[2] << 64) | x[3]);
-        *dit++       = y;
+    const auto it = g_creds.find(uname);
+    const auto ok = it != g_creds.end() && it->second == pass;
+    g_log.print("  checking creds: UNAME=", uname, "; PASS=", pass, "; OK=", ok);
+    return ok;
+}
+
+bool check_auth(const std::string_view sv) noexcept
+{
+    if (sv.starts_with("Basic ")) {
+        char buf[256], *dit = buf;
+        if (sv.size() / 4 * 3 >= std::size(buf))
+            return false;
+        for (auto i = 6uz; i + 4 <= sv.size(); i += 4) {
+            const auto x = sv.data() + i;
+            const auto y = ((b64chars.find(x[0]) & 63) << 18) | ((b64chars.find(x[1]) & 63) << 12) |
+                           ((b64chars.find(x[2]) & 63) << 6) | (b64chars.find(x[3]) & 63);
+            *dit++ = (y >> 16);
+            *dit++ = ((y >> 8) & 0xff);
+            *dit++ = (y & 0xff);
+        }
+        while (dit != buf && !dit[-1])
+            --dit;
+        const std::string_view creds{buf, static_cast<std::size_t>(dit - buf)};
+        const auto colon = creds.find(':');
+        return check_creds(creds.substr(0, colon), creds.substr(std::min(creds.size(), colon + 1)));
     }
-    g_log.print("  got auth: ", std::string_view{buf, static_cast<std::size_t>(dit - buf)});
+
+    // TODO: support more auth types
+    // https://developer.mozilla.org/en-US/docs/Web/HTTP/Authentication
+
     return false;
 }
+
+//
+// request serving
+//
 
 //! @brief Writes a response message serving a given request message
 //! @param rq Request message to serve
@@ -192,11 +215,11 @@ void serve(const message &rq, buffer &rs, buffer &body)
     if (rq.strt.ver == version::err)
         goto badver;
 
-    // if (const auto auth = rq.hdrs.get("Authorization", ""); !check_auth(auth)) {
-    //     rs.put("HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic\r\n\r\n");
-    //     g_log.print("  401 Unauthorized");
-    //     return;
-    // }
+    if (const auto auth = rq.hdrs.get("Authorization", ""); !check_auth(auth)) {
+        rs.put("HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic\r\n\r\n");
+        g_log.print("  401 Unauthorized");
+        return;
+    }
 
 #ifndef NDEBUG
     if (rq.strt.tgt.sv() == "/kill")

@@ -8,7 +8,8 @@
             "program": "${workspaceFolder}/build/src/server",
             "args": [
                 "${workspaceFolder}/own/vocab.gz",
-                "3000"
+                "3000",
+                "${workspaceFolder}/src/www"
             ],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",

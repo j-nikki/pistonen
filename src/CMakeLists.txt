@@ -35,7 +35,7 @@ add_custom_command(
 # server target
 #
 
-add_executable(server "${CMAKE_CURRENT_BINARY_DIR}/include/res.cpp" "server.cpp" "message.cpp" "vocabserv.cpp" "format.cpp" "buffer.cpp" "ptf.cpp")
+add_executable(server "${CMAKE_CURRENT_BINARY_DIR}/include/res.cpp" "server.cpp" "message.cpp" "vocabserv.cpp" "format.cpp" "buffer.cpp")
 
 target_include_directories(
   server

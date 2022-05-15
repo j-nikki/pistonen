@@ -89,30 +89,27 @@ struct headers {
         const auto it = sr::find(begin(), end(), keyuc, L(std::string_view(x.first.p, x.first.n)));
         return (it == end()) ? throw std::out_of_range{"headers::get"} : it->second;
     }
-
-//   private:
-//     [[nodiscard]] JUTIL_INLINE std::string_view Get(const std::string_view keylc,
-//                                                     const std::string_view def) const noexcept
-//     {
-//         sr::for_each(begin(), end(), L(printf("%.*s\n", x.first.n, x.first.p)));
-//         const auto it = sr::find(begin(), end(), keylc, L(std::string_view(x.first.p, x.first.n)));
-//         return (it == end()) ? def : it->second;
-//     }
-
-//   public:
-//     [[nodiscard]] JUTIL_INLINE std::string_view get(const std::string_view key) const
-//     {
-//         char lc[N - 1];
-//         sr::transform(key, lc, L(static_cast<char>(tolower(x))));
-//         return Get(lc);
-//     }
-//     [[nodiscard]] JUTIL_INLINE std::string_view get(const std::string_view key,
-//                                                     const std::string_view def) const noexcept
-//     {
-//         char lc[N - 1];
-//         sr::transform(key, lc, L(static_cast<char>(tolower(x))));
-//         return Get(lc, def);
-//     }
+    [[nodiscard]] JUTIL_INLINE std::string_view get(const std::string_view keyuc,
+                                                    const std::string_view def) const noexcept
+    {
+        const auto it = sr::find(begin(), end(), keyuc, L(std::string_view(x.first.p, x.first.n)));
+        return (it == end()) ? def : it->second;
+    }
+    template <std::size_t N>
+    [[nodiscard]] JUTIL_INLINE std::string_view get(const char (&key)[N]) const
+    {
+        char uc[N - 1];
+        std::transform(key, key + (N - 1), uc, FREF(tolower));
+        return get(std::string_view{uc});
+    }
+    template <std::size_t N>
+    [[nodiscard]] JUTIL_INLINE std::string_view get(const char (&key)[N],
+                                                    const std::string_view def) const noexcept
+    {
+        char uc[N - 1];
+        std::transform(key, key + (N - 1), uc, FREF(tolower));
+        return get(std::string_view{uc}, def);
+    }
 
     std::unique_ptr<entry[]> buf_ = std::make_unique_for_overwrite<entry[]>(defcap);
     std::size_t n_ = 0uz, cap_ = defcap;
