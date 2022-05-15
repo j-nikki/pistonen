@@ -48,6 +48,11 @@ JUTIL_INLINE const char *get_pass(char (&buf)[N], const char *prompt) noexcept
     return get_pass(buf, N, prompt);
 }
 
+namespace ptf
+{
+void test();
+}
+
 int main(int /*argc*/, char ** /*argv*/)
 {
     using options::help;

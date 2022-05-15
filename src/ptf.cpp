@@ -1,19 +1,17 @@
 #include "ptf/ptf.h"
 #include "ptf/detail/type.h"
 #include "ptf/detail/writer.h"
-#include <boost/iterator/function_output_iterator.hpp>
 
+#include <boost/hana/functional/fix.hpp>
 #include <fstream>
 #include <range/v3/all.hpp>
+#include <ranges>
 #include <tao/pegtl.hpp>
 #include <tao/pegtl/file_input.hpp>
 
 #include "jutil.h"
 
 #include "lmacro_begin.h"
-
-namespace r3 = ranges::v3;
-namespace rv = r3::view;
 
 /*
 The pistonen template file (PTF) syntax:
@@ -63,8 +61,14 @@ map:B[](xs:A[], f:B(A)) = ...f(xs)
 ```
 */
 
+namespace ptf
+{
 using namespace tao::pegtl;
 namespace sf = std::filesystem;
+namespace r3 = ::ranges::v3;
+namespace rv = r3::view;
+namespace sr = std::ranges;
+namespace sv = sr::views;
 
 //
 // utils
@@ -90,12 +94,6 @@ sf::path locate_source_file(std::string_view /*name*/)
 //
 // grammar definition
 //
-
-/*
-f() = () = () = 42
-f()()()
-*/
-
 struct grammar;
 template <class R>
 struct action_ : nothing<R> {
@@ -171,7 +169,7 @@ struct bin_op_name : sor<string<'=', '='>, string<'!', '='>,
 struct unary_op_name : one<'+', '-', '!'> {};
 struct fname : sor<dname, bin_op_name, unary_op_name, string<'(', ')'>, string<'[', ']'>> {};
 
-struct type;
+struct type_;
 struct fn_params;
 struct ctor_args;
 struct struct_body;
@@ -195,15 +193,15 @@ struct literal : seq<sor<bool_, hexfloat, hexint, float_, int_>> {};
 // types
 //
 
-struct fn_params : seq<one<'('>, list<struct type, one<','>, space>, one<')'>> {};
-struct fn_sig : seq<type, sspace, fn_params> {};
-struct type : seq<opt<string<'m', 'u', 't'>, pspace>, dname, opt<sspace, string<'[', ']'>>,
-                  opt<sspace, fn_params>> {};
+struct fn_params : seq<one<'('>, list<type_, one<','>, space>, one<')'>> {};
+struct fn_sig : seq<type_, sspace, fn_params> {};
+struct type_ : seq<opt<string<'m', 'u', 't'>, pspace>, dname, opt<sspace, string<'[', ']'>>,
+                   opt<sspace, fn_params>> {};
 
 struct expression : sor<literal> {};
 
 struct statement : seq<sor<expression>, lf> {};
-// struct definition : seq < opt<dname>, sspace, opt < one<':'>, sspace, type,
+// struct definition : seq < opt<dname>, sspace, opt < one<':'>, sspace, type_,
 //     sor<fn_params, ctor_ars>, sspace, one<'='>,
 //     sspace
 
@@ -213,8 +211,6 @@ struct fn_body : sor<statement, nest<star<fn_body_long>>> {};
 struct nimport : identifier {};
 struct grammar : until<eof, star<importln>, star<statement>> {};
 
-namespace ptf
-{
 bool parse(const sf::path &source)
 {
     file_input fi{source};
@@ -258,11 +254,33 @@ void dump_hex(jutil::sized_input_range auto &&xs, std::output_iterator<char> aut
     }
 }
 
+void print_type(const auto &t, int idt = 2)
+{
+    const auto &[k, v] = t;
+    printf("%.*s: ", static_cast<int>(k.size()), k.data());
+    const jutil::overload visitor{
+        [&](const valty &v_) { printf("\033[1m%#x\033[0m\n", std::to_underlying(v_)); },
+        [&](const fnsig &f) {
+            printf("\033[1mfn \033[0;2m[%zup %zur]\033[0m\n", f.params.size(), f.rets.size());
+            for (auto &&[ys, c] :
+                 {std::pair{std::ref(f.params), 'p'}, std::pair{std::ref(f.rets), 'r'}}) {
+                for (auto &&[i, y] :
+                     ys.get() | rv::transform(L(static_cast<type_ptr>(x))) | rv::enumerate) {
+                    jutil::call_n(L0(putc(' ', stdout)), idt);
+                    printf("\033[2m[%c%zd]\033[0m ", c, i);
+                    print_type(*y, idt + 2);
+                }
+            }
+        }};
+    bv::visit(visitor, v);
+}
+
 void test()
 {
     writer w;
-    types.emplace("asd", fnsig{{&types["i32"]}, {&types["i32"]}});
+    types.emplace("asd", fnsig{{get_type("i32")}, {get_type("i32")}});
     w.write_module();
+    jutil::call_with(FREF(print_type), types);
     dump_hex(w.span(), jutil::fn_it{L(putc(x, stdout))});
     putc('\n', stdout);
     std::ofstream ofs{"own/gen.wasm"};

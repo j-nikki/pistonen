@@ -35,7 +35,7 @@ struct fnsig {
 
 using type                 = bv::variant<struct fnsig, valty>;
 
-using type_map             = robin_hood::unordered_node_map<std::string, type>;
+using type_map             = robin_hood::unordered_node_map<std::string_view, type>;
 using type_ptr             = type_map::value_type *;
 
 constexpr inline auto toty = sv::transform(L(static_cast<type_ptr>(x)));
@@ -45,11 +45,18 @@ struct symbol_ {
     bool mut;
 };
 
-using sym_map = robin_hood::unordered_node_map<std::string, symbol_>;
+using sym_map = robin_hood::unordered_node_map<std::string_view, symbol_>;
 using sym_ptr = sym_map::value_type *;
 
 extern type_map types;
 extern sym_map syms;
+
+JUTIL_INLINE type_ptr get_type(const std::string_view sv) noexcept
+{
+    const auto it = types.find(sv, robin_hood::is_transparent_tag{});
+    return it == types.end() ? nullptr : &*it;
+}
+
 } // namespace ptf
 
 #include "../../lmacro_end.h"

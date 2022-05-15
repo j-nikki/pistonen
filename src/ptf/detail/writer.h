@@ -48,8 +48,12 @@ struct writer {
     {
         write_sized(
             [&](R &&xs) {
-                for (auto &&x : xs)
+                std::size_t n = 0;
+                for (auto &&x : static_cast<R &&>(xs)) {
                     write(static_cast<decltype(x) &&>(x));
+                    ++n;
+                }
+                return n;
             },
             static_cast<R &&>(xs_));
     }
@@ -78,19 +82,30 @@ struct writer {
         (write_impl(static_cast<Ts &&>(xs)), ...);
     }
     template <class... Args>
-    void write_sized(auto &&writefn, Args &&...args)
+    void write_sized(auto &&writefn, Args &&...args_)
     {
         const auto szi = sz_;
         sz_ += 4;
         const auto start = sz_;
-        writefn(static_cast<Args &&>(args)...);
-        const auto sz = static_cast<uint32_t>(sz_ - start);
+        JUTIL_PUSH_DIAG(JUTIL_WNO_SHADOW)
+        const auto [nbytes, sz] = [&](Args &&...args) {
+            if constexpr (std::is_void_v<decltype(writefn(static_cast<Args &&>(args)...))>) {
+                writefn(static_cast<Args &&>(args)...);
+                const auto nbytes = static_cast<uint32_t>(sz_ - start);
+                return std::pair{nbytes, nbytes};
+            } else {
+                const auto sz     = writefn(static_cast<Args &&>(args)...);
+                const auto nbytes = static_cast<uint32_t>(sz_ - start);
+                return std::pair{nbytes, sz};
+            }
+        }(static_cast<Args &&>(args_)...);
+        JUTIL_POP_DIAG()
 #ifndef NDEBUG
         // While redundant, trimming helps with debugging.
         auto i = szi;
         write_impl(sz, L(buf_[i++] = x, &));
-        memmove(&buf_[i], &buf_[start], sz);
-        sz_ = i + sz;
+        memmove(&buf_[i], &buf_[start], nbytes);
+        sz_ = i + nbytes;
 #else
         buf_[szi + 0] = static_cast<char>(0x80 | (sz & 0x7f));
         buf_[szi + 1] = static_cast<char>(0x80 | ((sz >> 7) & 0x7f));
