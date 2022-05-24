@@ -1,3 +1,5 @@
+#pragma once
+
 #include "detail/server.h"
 
 namespace pnen

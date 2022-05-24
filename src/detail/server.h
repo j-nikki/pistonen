@@ -1,3 +1,5 @@
+#pragma once
+
 #include <algorithm>
 #include <boost/preprocessor/cat.hpp>
 #include <boost/preprocessor/stringize.hpp>
@@ -8,8 +10,11 @@
 #include <coroutine>
 #include <experimental/memory>
 #include <fcntl.h>
+#include <memory>
 #include <netinet/in.h>
 #include <numeric>
+#include <openssl/err.h>
+#include <openssl/ssl.h>
 #include <ranges>
 #include <span>
 #include <stdio.h>
@@ -20,6 +25,7 @@
 #include <unistd.h>
 
 #include "../jutil.h"
+#include "../vocabserv.h"
 
 #include "../lmacro_begin.h"
 
@@ -107,15 +113,24 @@ struct read_state {
     size_t nbufspn;
 };
 
+struct write_state {
+    const char *buf;
+    size_t nbufspn;
+};
+
+using ssl_ptr = std::unique_ptr<SSL, decltype([](auto p) { SSL_free(p); })>;
+
 struct task {
+    JUTIL_PUSH_DIAG(JUTIL_WNO_SUBOBJ_LINKAGE)
     struct promise_type {
         read_state *rs;
+        ssl_ptr ssl;
         int sfd, tfd;
-        promise_type()                     = default;
-        promise_type(const promise_type &) = delete;
-        promise_type(promise_type &&)      = delete;
+        promise_type()                                = default;
+        promise_type(const promise_type &)            = delete;
+        promise_type(promise_type &&)                 = delete;
         promise_type &operator=(const promise_type &) = delete;
-        promise_type &operator=(promise_type &&) = delete;
+        promise_type &operator=(promise_type &&)      = delete;
         ~promise_type()
         {
             CHECK(close(sfd), != -1);
@@ -127,11 +142,13 @@ struct task {
         constexpr JUTIL_INLINE void return_void() {}
         constexpr JUTIL_INLINE void unhandled_exception() {}
     };
+    JUTIL_POP_DIAG()
     promise_type &p;
 };
 
 struct socket {
     const int fd;
+    SSL *ssl;
 
     //
     // read
@@ -172,9 +189,36 @@ struct socket {
     // write
     //
 
+  private:
+    // struct write_res_base : write_state {
+    //     [[nodiscard]] JUTIL_INLINE bool has_next() noexcept { return true; }
+    // };
+    // struct has_next_awaitable {
+    //     read_state &rs;
+    //     JUTIL_INLINE bool await_ready() noexcept { return false; }
+    //     JUTIL_INLINE void await_suspend(std::coroutine_handle<task::promise_type> h) noexcept
+    //     {
+    //         h.promise().rs = &rs;
+    //     }
+    //     JUTIL_INLINE bool await_resume() noexcept { return true; }
+    // };
+    // struct write_res : write_state {
+    //     JUTIL_INLINE has_next_awaitable has_next() noexcept { return {*this}; }
+    //     JUTIL_INLINE std::tuple<std::span<char>, write_state &> next() noexcept
+    //     {
+    //         return {{buf, bufspn}, {*this}};
+    //     }
+    // };
+
+  public:
     JUTIL_INLINE ssize_t write(const void *const buf, size_t nbuf) const noexcept
     {
-        return CHECK(::write(fd, buf, nbuf), != -1);
+        const auto swres = SSL_write(ssl, buf, nbuf);
+        if (swres <= 0) {
+            const auto reason = SSL_get_error(ssl, swres);
+            g_log.print("fd#", fd, ": SSL_write()=", swres, ", SSL_get_error()=", reason);
+        }
+        return swres;
     }
     JUTIL_INLINE ssize_t write(const std::string_view buf) const noexcept
     {
@@ -183,14 +227,18 @@ struct socket {
 };
 
 struct run_server_options {
-    uint16_t hostport;
-    timespec timeout;
+    uint16_t hostport    = 3000;
+    timespec timeout     = {.tv_sec = 5};
+    const char *ssl_cert = nullptr;
+    const char *ssl_pkey = nullptr;
 };
 
 template <class F, class... Args>
 using promisety = typename std::coroutine_traits<call_result<F, Args...>, Args...>::promise_type;
 template <class F, class... Args>
 using crhdlty = typename std::coroutine_handle<typename promisety<F, Args...>::promise_type>;
+
+enum class severity { info, error };
 
 template <callable_r<task, socket &&> Task>
 JUTIL_INLINE void run_server(const run_server_options o, Task on_accept)
@@ -204,6 +252,12 @@ JUTIL_INLINE void run_server(const run_server_options o, Task on_accept)
     CHECK(bind(acfd, reinterpret_cast<const sockaddr *>(&sin), sizeof(sin)), != -1);
     CHECK(listen(acfd, 5), != -1);
 
+    const auto ssl_mtd = TLS_server_method();
+    const auto ssl_ctx = CHECK(SSL_CTX_new(ssl_mtd));
+    DEFER[=] { SSL_CTX_free(ssl_ctx); };
+    CHECK(SSL_CTX_use_certificate_file(ssl_ctx, o.ssl_cert, SSL_FILETYPE_PEM), > 0);
+    CHECK(SSL_CTX_use_PrivateKey_file(ssl_ctx, o.ssl_pkey, SSL_FILETYPE_PEM), > 0);
+
     const auto epfd = CHECK(epoll_create1(0), != -1);
     epoll_event e{.events = EPOLLIN}, es[16];
     const itimerspec its{.it_value = o.timeout};
@@ -215,7 +269,19 @@ JUTIL_INLINE void run_server(const run_server_options o, Task on_accept)
                 socklen_t nsin = sizeof(sin);
                 const auto fd  = CHECK(
                      accept4(acfd, reinterpret_cast<sockaddr *>(&sin), &nsin, SOCK_NONBLOCK), != -1);
-                auto &p    = on_accept(socket{fd}).p;
+                ssl_ptr sp{SSL_new(ssl_ctx)};
+                SSL_set_fd(sp.get(), fd);
+                if (const auto sares = SSL_accept(sp.get()); sares <= 0) {
+                    const auto reason = SSL_get_error(sp.get(), sares);
+                    if (reason != SSL_ERROR_WANT_READ) {
+                        g_log.print("fd#", fd, ": SSL_accept()=", sares,
+                                    ", SSL_get_error()=", reason);
+                        continue;
+                    }
+                }
+
+                auto &p    = on_accept(socket{fd, sp.get()}).p;
+                p.ssl      = std::move(sp);
                 p.sfd      = fd;
                 auto h     = crhdl::from_promise(p);
                 e.data.ptr = h.address();
@@ -231,14 +297,26 @@ JUTIL_INLINE void run_server(const run_server_options o, Task on_accept)
             } else if (const auto iptr = to_uint(es[i].data.ptr); iptr & 1) {
                 crhdl::from_address(reinterpret_cast<void *>(iptr ^ 1)).destroy();
             } else [[likely]] {
-                auto h             = crhdl::from_address(es[i].data.ptr);
-                auto &[rs, sfd, _] = h.promise();
-                if (const auto nread = CHECK(read(sfd, rs->bufspn, rs->nbufspn), != -1)) {
-                    rs->bufspn += nread;
-                    rs->nbufspn -= nread;
+                auto h                  = crhdl::from_address(es[i].data.ptr);
+                auto &[rs, sp, sfd, _2] = h.promise();
+                if (const auto srres = SSL_read(sp.get(), rs->bufspn, rs->nbufspn); srres <= 0) {
+                    const auto reason = SSL_get_error(sp.get(), srres);
+                    if (reason != SSL_ERROR_WANT_READ) {
+                        g_log.print("fd#", sfd, ": SSL_read()=", srres,
+                                    ", SSL_get_error()=", reason);
+                        ERR_print_errors_cb(
+                            +[](const char *str, size_t len, void *) {
+                                g_log.print("  ", std::string_view{str, len});
+                                return 0;
+                            },
+                            nullptr);
+                        h.destroy();
+                    }
+                } else {
+                    rs->bufspn += srres;
+                    rs->nbufspn -= srres;
                     h.resume();
-                } else
-                    h.destroy();
+                }
             }
         } while (i--);
     }

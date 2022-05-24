@@ -82,7 +82,8 @@
         "thread": "cpp",
         "typeinfo": "cpp",
         "bitset": "cpp",
-        "regex": "cpp"
+        "regex": "cpp",
+        "expected": "cpp"
     },
     "clangd.arguments": []
 }

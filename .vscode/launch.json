@@ -7,9 +7,16 @@
             "request": "launch",
             "program": "${workspaceFolder}/build/src/server",
             "args": [
-                "${workspaceFolder}/own/vocab.gz",
+                "--pkey",
+                "own/key.pem",
+                "--cert",
+                "own/cert.pem",
+                "--port-num",
                 "3000",
-                "${workspaceFolder}/src/www"
+                "--vocab-path",
+                "own/vocab.gz",
+                "--www-root",
+                "src/www"
             ],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",

@@ -66,8 +66,8 @@ concept static_castable = requires(From &&x)
     static_cast<To>(static_cast<From &&>(x));
 };
 template <class To, class From>
-concept bit_castable = sizeof(To) == sizeof(From) &&
-                       std::is_trivially_copyable_v<To> &&std::is_trivially_copyable_v<From>;
+concept bit_castable = sizeof(To) == sizeof(From) and
+                       std::is_trivially_copyable_v<To> and std::is_trivially_copyable_v<From>;
 template <class To, class From>
 concept opaque_castable = static_castable<To, From> || bit_castable<To, From>;
 template <class To, class From>
@@ -86,6 +86,9 @@ constexpr To opaque_cast(From &x) noexcept
     else
         return std::bit_cast<To>(x);
 }
+
+template <class T, class... Us>
+concept one_of = (std::same_as<T, Us> or ...);
 
 #ifdef _MSC_VER
 #pragma warning(push)
@@ -110,14 +113,15 @@ constexpr To opaque_cast(From &x) noexcept
 #define JUTIL_INLINE   inline __attribute__((always_inline))
 #define JUTIL_NOINLINE __attribute__((noinline))
 #if defined(__GNUC__) || defined(__GNUG__)
-#define JUTIL_PUSH_DIAG(X)     _Pragma("GCC diagnostic push") X
-#define JUTIL_POP_DIAG()       _Pragma("GCC diagnostic pop")
-#define JUTIL_WNO_UNUSED_VALUE _Pragma("GCC diagnostic ignored \"-Wunused-value\"")
-#define JUTIL_WNO_UNUSED_PARAM _Pragma("GCC diagnostic ignored \"-Wunused-parameter\"")
-#define JUTIL_WNO_SHADOW       _Pragma("GCC diagnostic ignored \"-Wshadow\"")
-#define JUTIL_WNO_PARENTHESES  _Pragma("GCC diagnostic ignored \"-Wparentheses\"")
-#define JUTIL_WNO_SEQUENCE     _Pragma("GCC diagnostic ignored \"-Wsequence-point\"")
-#define JUTIL_WNO_CCAST        _Pragma("GCC diagnostic ignored \"-Wold-style-cast\"")
+#define JUTIL_PUSH_DIAG(X)       _Pragma("GCC diagnostic push") X
+#define JUTIL_POP_DIAG()         _Pragma("GCC diagnostic pop")
+#define JUTIL_WNO_UNUSED_VALUE   _Pragma("GCC diagnostic ignored \"-Wunused-value\"")
+#define JUTIL_WNO_UNUSED_PARAM   _Pragma("GCC diagnostic ignored \"-Wunused-parameter\"")
+#define JUTIL_WNO_SHADOW         _Pragma("GCC diagnostic ignored \"-Wshadow\"")
+#define JUTIL_WNO_PARENTHESES    _Pragma("GCC diagnostic ignored \"-Wparentheses\"")
+#define JUTIL_WNO_SEQUENCE       _Pragma("GCC diagnostic ignored \"-Wsequence-point\"")
+#define JUTIL_WNO_CCAST          _Pragma("GCC diagnostic ignored \"-Wold-style-cast\"")
+#define JUTIL_WNO_SUBOBJ_LINKAGE _Pragma("GCC diagnostic ignored \"-Wsubobject-linkage\"")
 #else
 #error "unsupported compiler"
 #endif
@@ -296,6 +300,8 @@ template <class T>
 concept borrowed_input_range = sr::borrowed_range<T> && sr::input_range<T>;
 template <class T>
 concept sized_input_range = sr::input_range<T> &&(requires(T r) { sr::size(r); });
+template <class R, class T>
+concept sized_output_range = sr::output_range<R, T> &&(requires(R r) { sr::size(r); });
 
 template <class T_>
 constexpr auto csr_sz() noexcept
@@ -973,6 +979,21 @@ struct getter {
 constexpr inline getter<0> fst{};
 constexpr inline getter<1> snd{};
 constexpr inline auto abs_ = L(x < 0 ? -x : x);
+
+//
+// caster
+//
+template <class T>
+struct caster {
+    template <class U>
+    [[nodiscard]] JUTIL_CI T operator()(U &&x) const
+        noexcept(noexcept([](U &&x) -> T { return static_cast<U &&>(x); }(static_cast<U &&>(x))))
+    {
+        return static_cast<U &&>(x);
+    }
+};
+template <class T>
+constexpr inline caster<T> cast{};
 
 #define FREF(F, ...)                                                                               \
     []<class... BOOST_PP_CAT(Ts, __LINE__)>(                                                       \

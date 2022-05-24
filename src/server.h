@@ -1,3 +1,5 @@
+#pragma once
+
 #include "pistonen.h"
 
-void run_server(const int port);
+pnen::task handle_connection(pnen::socket s);

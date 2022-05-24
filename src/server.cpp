@@ -1,7 +1,11 @@
-﻿#include <charconv>
+﻿#include "server.h"
+
+#include <charconv>
 #include <chrono>
 #include <filesystem>
 #include <memory>
+#include <openssl/err.h>
+#include <openssl/ssl.h>
 #include <range/v3/algorithm/copy.hpp>
 #include <range/v3/view/chunk.hpp>
 #include <range/v3/view/transform.hpp>
@@ -156,12 +160,71 @@ struct format::formatter<escaped> {
     static std::size_t maxsz(const escaped &e) noexcept { return e.size() * 5; }
 };
 
+void print_vec_u8(const auto &v_, const char *name)
+{
+    uint8_t xs[sizeof(v_)];
+    jutil::overload{
+        [&](const __m64 &v) { memcpy(xs, &v, sizeof(v)); },
+        [&](const __m128i &v) { _mm_storeu_si128(reinterpret_cast<__m128i *>(xs), v); } //
+    }(v_);
+    printf("\033[2m%s#\033[0;1m", name);
+    for (int i = sizeof(v_); i--;)
+        printf(" %2x ", xs[i]);
+    printf("\n\033[0;2m%s\033[0m ", name);
+    for (int i = sizeof(v_); i--;)
+        printf("%3u ", xs[i]);
+    printf("\n");
+}
+
+//
+// base64
+//
+
+struct b64_cidx_result {
+    uint32_t hi, lo;
+};
+__m128i b64_cidx(const __m128i cs) noexcept
+{
+#define b_c_vec(a, b, c, d, e, f, g)                                                               \
+    _mm_setr_epi8(                                                                                 \
+        static_cast<char>(a + 128), static_cast<char>(b + 128), static_cast<char>(c + 128),        \
+        static_cast<char>(d + 128), static_cast<char>(e + 128), static_cast<char>(f + 128),        \
+        static_cast<char>(g + 128), 0, static_cast<char>(a + 128), static_cast<char>(b + 128),     \
+        static_cast<char>(c + 128), static_cast<char>(d + 128), static_cast<char>(e + 128),        \
+        static_cast<char>(f + 128), static_cast<char>(g + 128), 0)
+    const auto sub   = _mm_sub_epi8(cs, b_c_vec('A', 'a', '0', '+', '/', '-', '_'));
+    const auto lt    = _mm_cmplt_epi8(sub, b_c_vec(26, 26, 10, 1, 1, 1, 1));
+    const auto blend = _mm_blendv_epi8(sub, b_c_vec(0, -26, -52, -62, -63, -62, -63), lt);
+    const auto sad   = _mm_sad_epu8(sub, blend);
+    return sad;
+#undef b_c_vec
+}
+
+template <class I, class O>
+struct b64_decode_result {
+    [[no_unique_address]] sr::iterator_t<I> in;
+    [[no_unique_address]] sr::iterator_t<O> out;
+};
+template <jutil::sized_input_range I, jutil::sized_output_range<sr::range_value_t<I>> O>
+b64_decode_result<I, O> b64_decode(I &&i, O &&o) noexcept
+{
+    auto it  = sr::begin(i);
+    auto dit = sr::begin(o);
+    for (auto n = std::min(sr::size(i) * 4, sr::size(o) * 3 - 3) / 16; n--; it += 4, dit += 3) {
+        const auto cs  = _mm_loadu_si64(it);
+        const auto i10 = b64_cidx(_mm_shuffle_epi8(cs, _mm_set_epi64x(0x101010101010101, 0)));
+        const auto i32 =
+            b64_cidx(_mm_shuffle_epi8(cs, _mm_set_epi64x(0x303030303030303, 0x202020202020202)));
+        const auto or_ = _mm_or_si128(i32, _mm_slli_epi64(i10, 12));
+        const auto y   = (_mm_extract_epi32(or_, 2) << 8) | (_mm_extract_epi32(or_, 0) << 14);
+        jutil::storeu(dit, _bswap(y));
+    }
+    return {it, dit};
+}
+
 //
 // authentication
 //
-
-static constexpr std::string_view b64chars =
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=";
 
 // TODO: remove creds from source code
 robin_hood::unordered_flat_map<std::string_view, std::string_view> g_creds{{"admin", "admin123"}};
@@ -177,22 +240,12 @@ bool check_creds(const std::string_view uname, const std::string_view pass) noex
 bool check_auth(const std::string_view sv) noexcept
 {
     if (sv.starts_with("Basic ")) {
-        char buf[256], *dit = buf;
-        if (sv.size() / 4 * 3 >= std::size(buf))
-            return false;
-        for (auto i = 6uz; i + 4 <= sv.size(); i += 4) {
-            const auto x = sv.data() + i;
-            const auto y = ((b64chars.find(x[0]) & 63) << 18) | ((b64chars.find(x[1]) & 63) << 12) |
-                           ((b64chars.find(x[2]) & 63) << 6) | (b64chars.find(x[3]) & 63);
-            *dit++ = (y >> 16);
-            *dit++ = ((y >> 8) & 0xff);
-            *dit++ = (y & 0xff);
-        }
-        while (dit != buf && !dit[-1])
+        char buf[256];
+        auto [_, dit]  = b64_decode(sv.substr(6), buf);
+        const auto col = sr::find(buf, dit, ':');
+        while (dit != col && !dit[-1])
             --dit;
-        const std::string_view creds{buf, static_cast<std::size_t>(dit - buf)};
-        const auto colon = creds.find(':');
-        return check_creds(creds.substr(0, colon), creds.substr(std::min(creds.size(), colon + 1)));
+        return check_creds({buf, col}, {col + 1, dit});
     }
 
     // TODO: support more auth types
@@ -200,6 +253,8 @@ bool check_auth(const std::string_view sv) noexcept
 
     return false;
 }
+
+// example: check_auth("Basic dXNlcm5hbWU6cGFzc3dvcmQ="); // checks username:password
 
 //
 // request serving
@@ -299,11 +354,4 @@ pnen::task handle_connection(pnen::socket s)
     CHECK(s.write(rs.data(), rs.size()), != -1);
 
     DBGEXPR(printf("con#%d: write end\n", id_));
-}
-
-void run_server(const int port)
-{
-    const pnen::run_server_options o{.hostport = static_cast<uint16_t>(port),
-                                     .timeout  = {.tv_sec = KEEP_ALIVE_SECS}};
-    pnen::run_server(o, handle_connection);
 }
