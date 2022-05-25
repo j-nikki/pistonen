@@ -42,6 +42,25 @@ static constexpr std::string_view mt_ss[]{"text/javascript", "text/css", "text/h
         return BOOST_PP_CAT(x, __LINE__);                                                          \
     })()
 
+namespace pnen::detail
+{
+void log_ssl_error(SSL *ssl, const char *fname, int err, std::source_location sl)
+{
+    if (ssl) {
+        g_log.print(sl.file_name(), ":", sl.line(), ":", sl.column(), ": fd#", SSL_get_fd(ssl),
+                    ": ", fname, "() FAIL, SSL_get_error()=", err);
+    } else {
+        g_log.print(sl.file_name(), ":", sl.line(), ":", sl.column(), ": ", fname, "()=", err);
+    }
+    ERR_print_errors_cb(
+        +[](const char *str, size_t len, void *) {
+            g_log.print("  ", std::string_view{str, len});
+            return 0;
+        },
+        nullptr);
+}
+} // namespace pnen::detail
+
 [[nodiscard]] JUTIL_INLINE const std::string_view &mimetype_to_string(mimetype mt) noexcept
 {
     return mt_ss[CHECK(std::to_underlying(mt), >= 0, <= 2)];
@@ -330,14 +349,16 @@ pnen::task handle_connection(pnen::socket s)
         const auto [it, _] = sr::search(b, std::string_view{"\r\n\r\n"});
         if (it == b.end()) {
             if (rs.nbufspn == 0) {
-                s.write("431 Request Header Fields Too Large\r\n\r\n");
+                FOR_CO_AWAIT (s.write("431 Request Header Fields Too Large\r\n\r\n"))
+                    ;
                 co_return;
             }
         } else { // end of header (CRLFCRLF)
             parse_header(buf, &*it, rq);
             break;
         }
-    }
+    } else
+        co_return;
 
     // Handle request & build response
     DBGEXPR(printf("vvv con#%d: received message with the header:\n", id_));
@@ -351,7 +372,8 @@ pnen::task handle_connection(pnen::socket s)
     serve(rq, rs, rs_body);
 
     // Write response
-    CHECK(s.write(rs.data(), rs.size()), != -1);
+    FOR_CO_AWAIT (s.write(rs.data(), rs.size()))
+        ;
 
     DBGEXPR(printf("con#%d: write end\n", id_));
 }

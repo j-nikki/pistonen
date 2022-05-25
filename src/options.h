@@ -44,29 +44,39 @@ struct visitor_fbdef {
     }
 };
 
-template <std::size_t I = 0, class T, class U, class V, class D,
-          std::size_t N = std::tuple_size_v<T>>
-constexpr auto visit_idx(const T &prs, const U &y, V &&v, D &&d) // TODO: noexcept(...)
-    -> decltype(static_cast<D &&>(d)())
+template <std::size_t I>
+using index = std::integral_constant<std::size_t, I>;
+
+template <class, class>
+struct vi_nothrow;
+template <class V, std::size_t... Is>
+struct vi_nothrow<V, std::index_sequence<Is...>>
+    : std::bool_constant<(noexcept(std::declval<V &&>()(index<Is>{})) && ...)> {
+};
+
+template <std::size_t I = 0, class... Ts, class U, class V, class D>
+JUTIL_CI int visit_idx(const std::tuple<Ts...> &prs, const U &y, V &&v,
+                       D &&d) noexcept(vi_nothrow<V, std::index_sequence_for<Ts...>>::value)
 {
-    if constexpr (I == N)
+    if constexpr (I == sizeof...(Ts))
         return static_cast<D &&>(d)();
     else if (std::get<I>(prs)(y))
-        return static_cast<V &&>(v)(std::integral_constant<std::size_t, I>{});
+        return static_cast<V &&>(v)(index<I>{});
     else
         return visit_idx<I + 1>(prs, y, static_cast<V &&>(v), static_cast<D &&>(d));
 }
 
 template <class... Ts, class U, std::size_t... Is>
-std::tuple<Ts..., U> tpl_app(std::tuple<Ts...> &&tpl, U &&x, std::index_sequence<Is...>)
+JUTIL_CI std::tuple<Ts..., U> tpl_app(std::tuple<Ts...> &&tpl, U &&x,
+                                      std::index_sequence<Is...>) noexcept
 {
     return {std::get<Is>(static_cast<std::tuple<Ts...> &&>(tpl))..., static_cast<U &&>(x)};
 }
 
 template <class... Ts>
-constexpr auto strs(Ts &&...xs_)
+JUTIL_CI auto strs(Ts &&...xs_) noexcept
 {
-    return [xs = std::tuple<Ts...>{static_cast<Ts>(xs_)...}](const string_view sv) {
+    return [xs = std::tuple{string_view{xs_}...}](const string_view sv) {
         return [&]<std::size_t... Is>(std::index_sequence<Is...>)
         {
             return ((std::get<Is>(xs) == sv) || ...);
@@ -75,8 +85,7 @@ constexpr auto strs(Ts &&...xs_)
     };
 }
 
-JUTIL_CI int Visit(auto &&v, const string_view sv, auto arg_)
-{
+constexpr inline auto select_visitor = [](auto &&v, const string_view sv, auto arg_) {
     return visit_idx(
         v.pfs_, sv, [&](auto I) { return visit(std::get<I>(v.fs_)); },
         [&] {
@@ -88,20 +97,22 @@ JUTIL_CI int Visit(auto &&v, const string_view sv, auto arg_)
             } else
                 return bv::unsafe_get<1>(arg);
         });
-}
-
-template <class PFs, class PSs, class Fs, class Ss, class Unk>
-struct visitor {
-    PFs pfs_;
-    PSs pss_;
-    Fs fs_;
-    Ss ss_;
-    Unk unk_;
-    JUTIL_CI int operator()(const string_view s, auto a) const { return Visit(*this, s, a); }
-    JUTIL_CI int operator()(const string_view s, auto a) { return Visit(*this, s, a); }
 };
-template <class PFs, class PSs, class Fs, class Ss, class Unk>
-visitor(PFs &&, PSs &&, Fs &&, Ss &&, Unk &&) -> visitor<PFs, PSs, Fs, Ss, Unk>;
+
+template <class Vs>
+struct visitor_selector {
+    Vs vs_;
+    JUTIL_CI int operator()(const string_view sv, auto arg_) const //
+        noexcept(noexcept(select_visitor(vs_, sv, arg_)))
+    {
+        return select_visitor(vs_, sv, arg_);
+    }
+    JUTIL_CI int operator()(const string_view sv, auto arg_) //
+        noexcept(noexcept(select_visitor(vs_, sv, arg_)))
+    {
+        return select_visitor(vs_, sv, arg_);
+    }
+};
 
 template <class, class, class, class, class>
 struct visitor_maker;
@@ -115,12 +126,9 @@ struct visitor_maker<std::tuple<PFs...>, std::tuple<PSs...>, std::tuple<Fs...>, 
     std::tuple<Fs...> fs_;
     std::tuple<Ss...> ss_;
     Unk unk_;
-    JUTIL_CI auto operator()() &&noexcept -> visitor<std::tuple<PFs...>, std::tuple<PSs...>,
-                                                     std::tuple<Fs...>, std::tuple<Ss...>, Unk>
+    JUTIL_CI auto operator()() &&noexcept -> visitor_selector<this_type>
     {
-        return {static_cast<std::tuple<PFs...> &&>(pfs_), static_cast<std::tuple<PSs...> &&>(pss_),
-                static_cast<std::tuple<Fs...> &&>(fs_), static_cast<std::tuple<Ss...> &&>(ss_),
-                static_cast<Unk &&>(unk_)};
+        return {static_cast<this_type &&>(*this)};
     }
     template <jutil::predicate<string_view> Pr, jutil::callable<string_view> V>
     JUTIL_CI auto operator()(Pr &&pr,
@@ -195,6 +203,8 @@ JUTIL_CI int visit(int argc, char *argv[], opt_visitor auto &&ov, arg_visitor au
             while (++f != l)
                 o_go_visit(av, string_view{*f});
             break;
+            // } else if (opt == "-help" || opt == "h") {
+            // TODO: print help
         } else {
             o_go_visit(ov, opt.substr(1), [&] -> arg_ty {
                 if (++f == l) {

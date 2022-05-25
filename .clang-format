@@ -7,7 +7,7 @@ ReflowComments: true
 AlwaysBreakTemplateDeclarations: Yes
 CommentPragmas: '^! .*'
 BinPackParameters: true
-ForEachMacros: ['FOR_CO_AWAIT']
+IfMacros: ['FOR_CO_AWAIT']
 AlignConsecutiveMacros: AcrossEmptyLinesAndComments
 AllowShortCaseLabelsOnASingleLine: true
 BreakBeforeBraces: Custom

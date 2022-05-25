@@ -16,7 +16,9 @@
                 "--vocab-path",
                 "own/vocab.gz",
                 "--www-root",
-                "src/www"
+                "src/www",
+                "--pkpass",
+                "asdf"
             ],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",

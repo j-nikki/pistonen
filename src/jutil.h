@@ -122,6 +122,8 @@ concept one_of = (std::same_as<T, Us> or ...);
 #define JUTIL_WNO_SEQUENCE       _Pragma("GCC diagnostic ignored \"-Wsequence-point\"")
 #define JUTIL_WNO_CCAST          _Pragma("GCC diagnostic ignored \"-Wold-style-cast\"")
 #define JUTIL_WNO_SUBOBJ_LINKAGE _Pragma("GCC diagnostic ignored \"-Wsubobject-linkage\"")
+#define JUTIL_WNO_EMPTY_BODY     _Pragma("GCC diagnostic ignored \"-Wempty-body\"")
+#define JUTIL_WNO_DANGLING_ELSE  _Pragma("GCC diagnostic ignored \"-Wdangling-else\"")
 #else
 #error "unsupported compiler"
 #endif

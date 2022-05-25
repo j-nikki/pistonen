@@ -29,7 +29,7 @@ int main(int argc, char **argv)
              [&] {
                  fprintf(stderr,
                          "%s --port-num <port> --vocab-path <path> --www-root <path> --log-dir "
-                         "<path> --cert <path> --pkey <path>",
+                         "<path> --cert <path> --pkey <path> --pkpass <password>",
                          argv[0]);
                  return 1;
              }) //
@@ -53,6 +53,7 @@ int main(int argc, char **argv)
             ("-log-dir", [&](const std::string_view sv) { logdir = sv.data(); })         //
             ("-cert", [&](const std::string_view cert) { opts.ssl_cert = cert.data(); }) //
             ("-pkey", [&](const std::string_view pkey) { opts.ssl_pkey = pkey.data(); }) //
+            ("-pkpass", [&](const std::string_view pass) { opts.pk_pass = pass; })       //
             ();
 
         if (const auto res = options::visit(argc, argv, ov, options::default_visitor))

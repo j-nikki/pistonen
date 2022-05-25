@@ -16,6 +16,7 @@
 #include <openssl/err.h>
 #include <openssl/ssl.h>
 #include <ranges>
+#include <source_location>
 #include <span>
 #include <stdio.h>
 #include <sys/epoll.h>
@@ -56,25 +57,35 @@ using namespace jutil;
 #define PNEN_dbg(T, F) F
 #endif
 
+enum class loop_state {
+    suspend,   // spurious wake -> resuspend
+    error,     // got error -> go to else-block
+    has_next,  // next() available -> enter loop
+    exhausted, // exhausted data -> exit loop
+};
+
 // clang-format off
 template <class T>
-concept t_has_first = requires(T x) {
-    x.first();
-    { x.has_first() } -> std::same_as<bool>;
+concept has_next = requires (T x) {
+    x.next();
+};
+template <class T>
+concept has_first_state = requires (T x) {
+    x.first_state();
 };
 // clang-format on
-constexpr inline auto has_first = []<class T>(T &x) {
-    if constexpr (t_has_first<T>)
-        return x.has_first();
-    else
-        return x.has_next();
+
+struct empty {};
+JUTIL_CI empty next(auto &&) noexcept { return {}; }
+JUTIL_CI auto next(has_next auto &&x) noexcept -> decltype(x.next()) { return x.next(); }
+struct always_suspend : std::suspend_never {
+    JUTIL_CI loop_state await_resume() const noexcept { return loop_state::suspend; }
 };
-constexpr inline auto first = []<class T>(T &x) {
-    if constexpr (t_has_first<T>)
-        return x.first();
-    else
-        return x.next();
-};
+JUTIL_CI always_suspend first_state(auto &&) noexcept { return {}; }
+JUTIL_CI auto first_state(has_first_state auto &&x) noexcept(noexcept(x.first_state()))
+{
+    return x.first_state();
+}
 
 #define FOR_CO_AWAIT_bind(X) FOR_CO_AWAIT_bind_exp X
 #define FOR_CO_AWAIT_bind_exp(x, ...) __VA_OPT__([) x __VA_OPT__(,) __VA_ARGS__ __VA_OPT__(])
@@ -82,49 +93,55 @@ constexpr inline auto first = []<class T>(T &x) {
     if (auto BOOST_PP_CAT(fca_it, __LINE__) =                                                      \
             BOOST_PP_VARIADIC_ELEM(BOOST_PP_VARIADIC_SIZE(__VA_ARGS__), y, __VA_ARGS__);           \
         0) {                                                                                       \
-    } else if (bool BOOST_PP_CAT(fca_ok, __LINE__) =                                               \
-                   co_await ::pnen::detail::has_first(BOOST_PP_CAT(fca_it, __LINE__));             \
-               !BOOST_PP_CAT(fca_ok, __LINE__)) {                                                  \
+    } else if (auto BOOST_PP_CAT(fca_s, __LINE__) =                                                \
+                   co_await ::pnen::detail::first_state(BOOST_PP_CAT(fca_it, __LINE__));           \
+               0) {                                                                                \
     } else                                                                                         \
-        for (auto &&BOOST_PP_CAT(fca_var, __LINE__) =                                              \
-                 ::pnen::detail::first(BOOST_PP_CAT(fca_it, __LINE__));                            \
-             BOOST_PP_CAT(fca_ok, __LINE__);                                                       \
-             (BOOST_PP_CAT(fca_ok, __LINE__) =                                                     \
-                  co_await BOOST_PP_CAT(fca_it, __LINE__).has_next()) &&                           \
-             (BOOST_PP_CAT(fca_var, __LINE__) = BOOST_PP_CAT(fca_it, __LINE__).next(), 0))         \
-            if (auto &&FOR_CO_AWAIT_bind(                                                          \
-                    BOOST_PP_TUPLE_POP_BACK((x, y __VA_OPT__(, __VA_ARGS__)))) =                   \
-                    static_cast<decltype(BOOST_PP_CAT(fca_var, __LINE__)) &&>(                     \
-                        BOOST_PP_CAT(fca_var, __LINE__));                                          \
-                0) {                                                                               \
-            } else
+        for (; BOOST_PP_CAT(fca_s, __LINE__) != ::pnen::detail::loop_state::exhausted;             \
+             BOOST_PP_CAT(fca_s, __LINE__) =                                                       \
+                 (BOOST_PP_CAT(fca_s, __LINE__) == ::pnen::detail::loop_state::error)              \
+                     ? ::pnen::detail::loop_state::exhausted                                       \
+                     : co_await BOOST_PP_CAT(fca_it, __LINE__).state())                            \
+            if (BOOST_PP_CAT(fca_s, __LINE__) == ::pnen::detail::loop_state::suspend) {            \
+                continue;                                                                          \
+            } else                                                                                 \
+                JUTIL_PUSH_DIAG(JUTIL_WNO_DANGLING_ELSE)                                           \
+    if (BOOST_PP_CAT(fca_s, __LINE__) == ::pnen::detail::loop_state::has_next)                     \
+        if (auto &&FOR_CO_AWAIT_bind(BOOST_PP_TUPLE_POP_BACK((x, y __VA_OPT__(, __VA_ARGS__)))) =  \
+                ::pnen::detail::next(BOOST_PP_CAT(fca_it, __LINE__));                              \
+            0) {                                                                                   \
+        } else                                                                                     \
+            JUTIL_POP_DIAG()
 #define FOR_CO_AWAIT_dummy(...)                                                                    \
     FOR_CO_AWAIT_impl(BOOST_PP_CAT(fca_dummy, __LINE__), __VA_ARGS__)                              \
         PNEN_push_diag(PNEN_wno_unused_value) if ((BOOST_PP_CAT(fca_dummy, __LINE__), 0))          \
             PNEN_pop_diag();                                                                       \
-    else
+    else for (bool BOOST_PP_CAT(fca_once, __LINE__) = true; BOOST_PP_CAT(fca_once, __LINE__);      \
+              BOOST_PP_CAT(fca_once, __LINE__)      = false)
 #define FOR_CO_AWAIT(x, ...)                                                                       \
     BOOST_PP_IF(BOOST_PP_CHECK_EMPTY(__VA_ARGS__), FOR_CO_AWAIT_dummy, FOR_CO_AWAIT_impl)          \
     (x, __VA_ARGS__)
 
 struct read_state {
+    SSL *ssl;
     char *buf;
     char *bufspn;
     size_t nbufspn;
 };
 
 struct write_state {
-    const char *buf;
-    size_t nbufspn;
+    SSL *ssl;
+    const void *buf;
+    size_t nbuf;
 };
 
-using ssl_ptr = std::unique_ptr<SSL, decltype([](auto p) { SSL_free(p); })>;
+void log_ssl_error(SSL *ssl, const char *fname, int err,
+                   std::source_location sl = std::source_location::current());
 
 struct task {
     JUTIL_PUSH_DIAG(JUTIL_WNO_SUBOBJ_LINKAGE)
     struct promise_type {
-        read_state *rs;
-        ssl_ptr ssl;
+        SSL *ssl;
         int sfd, tfd;
         promise_type()                                = default;
         promise_type(const promise_type &)            = delete;
@@ -133,8 +150,11 @@ struct task {
         promise_type &operator=(promise_type &&)      = delete;
         ~promise_type()
         {
+            if (const auto ssres = SSL_shutdown(ssl); ssres < 0)
+                log_ssl_error(ssl, "SSL_shutdown", SSL_get_error(ssl, ssres));
             CHECK(close(sfd), != -1);
             CHECK(close(tfd), != -1);
+            SSL_free(ssl);
         }
         constexpr JUTIL_INLINE task get_return_object() & { return {*this}; }
         constexpr JUTIL_INLINE std::suspend_always initial_suspend() { return {}; }
@@ -147,7 +167,6 @@ struct task {
 };
 
 struct socket {
-    const int fd;
     SSL *ssl;
 
     //
@@ -155,20 +174,26 @@ struct socket {
     //
 
   private:
-    struct read_res_base : read_state {
-        [[nodiscard]] JUTIL_INLINE bool has_next() noexcept { return true; }
-    };
-    struct has_next_awaitable {
+    struct read_state_awaitable {
         read_state &rs;
         JUTIL_INLINE bool await_ready() noexcept { return false; }
-        JUTIL_INLINE void await_suspend(std::coroutine_handle<task::promise_type> h) noexcept
+        JUTIL_INLINE void await_suspend(std::coroutine_handle<>) noexcept {}
+        JUTIL_INLINE loop_state await_resume() noexcept
         {
-            h.promise().rs = &rs;
+            if (const auto srres = SSL_read(rs.ssl, rs.bufspn, rs.nbufspn); srres > 0) {
+                rs.bufspn += srres;
+                rs.nbufspn -= srres;
+            } else {
+                const auto err = SSL_get_error(rs.ssl, srres);
+                return err == SSL_ERROR_WANT_READ
+                           ? loop_state::suspend
+                           : (log_ssl_error(rs.ssl, "SSL_read", err), loop_state::error);
+            }
+            return loop_state::has_next;
         }
-        JUTIL_INLINE bool await_resume() noexcept { return true; }
     };
     struct read_res : read_state {
-        JUTIL_INLINE has_next_awaitable has_next() noexcept { return {*this}; }
+        JUTIL_INLINE read_state_awaitable state() noexcept { return {*this}; }
         JUTIL_INLINE std::tuple<std::span<char>, read_state &> next() noexcept
         {
             return {{buf, bufspn}, {*this}};
@@ -180,9 +205,9 @@ struct socket {
     //! @param buf The start of destination buffer
     //! @param nbuf The maximum amount of bytes to read
     //! @return read_res_iter Await-iterable yielding amount of bytes read
-    JUTIL_INLINE read_res read(char *const buf, const size_t nbuf) const noexcept
+    [[nodiscard]] JUTIL_INLINE read_res read(char *const buf, const size_t nbuf) const noexcept
     {
-        return {{.buf = buf, .bufspn = buf, .nbufspn = nbuf}};
+        return {{.ssl = ssl, .buf = buf, .bufspn = buf, .nbufspn = nbuf}};
     }
 
     //
@@ -190,47 +215,57 @@ struct socket {
     //
 
   private:
-    // struct write_res_base : write_state {
-    //     [[nodiscard]] JUTIL_INLINE bool has_next() noexcept { return true; }
-    // };
-    // struct has_next_awaitable {
-    //     read_state &rs;
-    //     JUTIL_INLINE bool await_ready() noexcept { return false; }
-    //     JUTIL_INLINE void await_suspend(std::coroutine_handle<task::promise_type> h) noexcept
-    //     {
-    //         h.promise().rs = &rs;
-    //     }
-    //     JUTIL_INLINE bool await_resume() noexcept { return true; }
-    // };
-    // struct write_res : write_state {
-    //     JUTIL_INLINE has_next_awaitable has_next() noexcept { return {*this}; }
-    //     JUTIL_INLINE std::tuple<std::span<char>, write_state &> next() noexcept
-    //     {
-    //         return {{buf, bufspn}, {*this}};
-    //     }
-    // };
+    template <bool F>
+    struct write_state_awaitable {
+        write_state &ws;
+        JUTIL_INLINE bool await_ready() noexcept
+        {
+            if constexpr (!F) {
+                return false;
+            } else if (const auto swres = SSL_write(ws.ssl, ws.buf, ws.nbuf); swres > 0) {
+                return true;
+            } else {
+                const auto err = SSL_get_error(ws.ssl, swres);
+                return err != SSL_ERROR_WANT_WRITE;
+            }
+        }
+        JUTIL_INLINE void await_suspend(std::coroutine_handle<>) noexcept {}
+        JUTIL_INLINE loop_state await_resume() noexcept
+        {
+            if constexpr (F) {
+                return loop_state::exhausted;
+            } else if (const auto swres = SSL_write(ws.ssl, ws.buf, ws.nbuf); swres > 0) {
+                return loop_state::exhausted;
+            } else {
+                const auto err = SSL_get_error(ws.ssl, swres);
+                return err == SSL_ERROR_WANT_WRITE
+                           ? loop_state::suspend
+                           : (log_ssl_error(ws.ssl, "SSL_write", err), loop_state::error);
+            }
+        }
+    };
+    struct write_res : write_state {
+        JUTIL_INLINE write_state_awaitable<true> first_state() noexcept { return {*this}; }
+        JUTIL_INLINE write_state_awaitable<false> state() noexcept { return {*this}; }
+    };
 
   public:
-    JUTIL_INLINE ssize_t write(const void *const buf, size_t nbuf) const noexcept
+    JUTIL_INLINE write_res write(const void *const buf, size_t nbuf) const noexcept
     {
-        const auto swres = SSL_write(ssl, buf, nbuf);
-        if (swres <= 0) {
-            const auto reason = SSL_get_error(ssl, swres);
-            g_log.print("fd#", fd, ": SSL_write()=", swres, ", SSL_get_error()=", reason);
-        }
-        return swres;
+        return {{.ssl = ssl, .buf = buf, .nbuf = nbuf}};
     }
-    JUTIL_INLINE ssize_t write(const std::string_view buf) const noexcept
+    [[nodiscard]] JUTIL_INLINE write_res write(const std::string_view buf) const noexcept
     {
         return write(buf.data(), buf.size());
     }
 };
 
 struct run_server_options {
-    uint16_t hostport    = 3000;
-    timespec timeout     = {.tv_sec = 5};
-    const char *ssl_cert = nullptr;
-    const char *ssl_pkey = nullptr;
+    uint16_t hostport        = 3000;
+    timespec timeout         = {.tv_sec = 5};
+    const char *ssl_cert     = nullptr;
+    const char *ssl_pkey     = nullptr;
+    std::string_view pk_pass = {};
 };
 
 template <class F, class... Args>
@@ -256,7 +291,17 @@ JUTIL_INLINE void run_server(const run_server_options o, Task on_accept)
     const auto ssl_ctx = CHECK(SSL_CTX_new(ssl_mtd));
     DEFER[=] { SSL_CTX_free(ssl_ctx); };
     CHECK(SSL_CTX_use_certificate_file(ssl_ctx, o.ssl_cert, SSL_FILETYPE_PEM), > 0);
-    CHECK(SSL_CTX_use_PrivateKey_file(ssl_ctx, o.ssl_pkey, SSL_FILETYPE_PEM), > 0);
+    SSL_CTX_set_default_passwd_cb(ssl_ctx, [](char *buf, int nbuf, int, void *pass_) {
+        const auto pass = static_cast<const std::string_view *>(pass_);
+        return static_cast<int>(pass->copy(buf, nbuf));
+    });
+    SSL_CTX_set_default_passwd_cb_userdata(
+        ssl_ctx, const_cast<void *>(static_cast<const void *>(&o.pk_pass)));
+    if (const auto supres = SSL_CTX_use_PrivateKey_file(ssl_ctx, o.ssl_pkey, SSL_FILETYPE_PEM);
+        supres != 1) {
+        log_ssl_error(nullptr, "SSL_CTX_use_PrivateKey_file", supres);
+        return;
+    }
 
     const auto epfd = CHECK(epoll_create1(0), != -1);
     epoll_event e{.events = EPOLLIN}, es[16];
@@ -269,19 +314,18 @@ JUTIL_INLINE void run_server(const run_server_options o, Task on_accept)
                 socklen_t nsin = sizeof(sin);
                 const auto fd  = CHECK(
                      accept4(acfd, reinterpret_cast<sockaddr *>(&sin), &nsin, SOCK_NONBLOCK), != -1);
-                ssl_ptr sp{SSL_new(ssl_ctx)};
-                SSL_set_fd(sp.get(), fd);
-                if (const auto sares = SSL_accept(sp.get()); sares <= 0) {
-                    const auto reason = SSL_get_error(sp.get(), sares);
-                    if (reason != SSL_ERROR_WANT_READ) {
-                        g_log.print("fd#", fd, ": SSL_accept()=", sares,
-                                    ", SSL_get_error()=", reason);
+                const auto ssl = SSL_new(ssl_ctx);
+                SSL_set_fd(ssl, fd);
+                if (const auto sares = SSL_accept(ssl); sares <= 0) {
+                    if (const auto err = SSL_get_error(ssl, sares); err != SSL_ERROR_WANT_READ) {
+                        SSL_free(ssl);
+                        log_ssl_error(ssl, "SSL_accept", err);
                         continue;
                     }
                 }
 
-                auto &p    = on_accept(socket{fd, sp.get()}).p;
-                p.ssl      = std::move(sp);
+                auto &p    = on_accept(socket{ssl}).p;
+                p.ssl      = ssl;
                 p.sfd      = fd;
                 auto h     = crhdl::from_promise(p);
                 e.data.ptr = h.address();
@@ -297,26 +341,7 @@ JUTIL_INLINE void run_server(const run_server_options o, Task on_accept)
             } else if (const auto iptr = to_uint(es[i].data.ptr); iptr & 1) {
                 crhdl::from_address(reinterpret_cast<void *>(iptr ^ 1)).destroy();
             } else [[likely]] {
-                auto h                  = crhdl::from_address(es[i].data.ptr);
-                auto &[rs, sp, sfd, _2] = h.promise();
-                if (const auto srres = SSL_read(sp.get(), rs->bufspn, rs->nbufspn); srres <= 0) {
-                    const auto reason = SSL_get_error(sp.get(), srres);
-                    if (reason != SSL_ERROR_WANT_READ) {
-                        g_log.print("fd#", sfd, ": SSL_read()=", srres,
-                                    ", SSL_get_error()=", reason);
-                        ERR_print_errors_cb(
-                            +[](const char *str, size_t len, void *) {
-                                g_log.print("  ", std::string_view{str, len});
-                                return 0;
-                            },
-                            nullptr);
-                        h.destroy();
-                    }
-                } else {
-                    rs->bufspn += srres;
-                    rs->nbufspn -= srres;
-                    h.resume();
-                }
+                crhdl::from_address(es[i].data.ptr).resume();
             }
         } while (i--);
     }

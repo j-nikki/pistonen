@@ -83,7 +83,8 @@
         "typeinfo": "cpp",
         "bitset": "cpp",
         "regex": "cpp",
-        "expected": "cpp"
+        "expected": "cpp",
+        "source_location": "cpp"
     },
     "clangd.arguments": []
 }
