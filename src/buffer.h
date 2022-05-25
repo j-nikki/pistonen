@@ -35,14 +35,19 @@ struct basic_buffer {
             grow<Append>(new_n);
         n_ = static_cast<std::size_t>(fput(&buf_[base], static_cast<Args &&>(args)...) - &buf_[0]);
     }
-    
+
   public:
     template <bool Append = false, class... Args>
     JUTIL_INLINE std::size_t put(Args &&...args)
     {
         const auto sz = format::maxsz(args...);
-        Put(sz, FREF(format::format), args...);
+        Put<Append>(sz, FREF(format::format), args...);
         return n_;
+    }
+    template <class... Args>
+    JUTIL_INLINE std::size_t append(Args &&...args)
+    {
+        return put<true>(static_cast<Args &&>(args)...);
     }
 
     std::unique_ptr<ChTy[]> buf_ = std::make_unique_for_overwrite<ChTy[]>(defcap);

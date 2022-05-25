@@ -54,3 +54,4 @@ own/
 .ts
 CMakeUserPresets.json
 build/
+.vscode/

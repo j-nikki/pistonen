@@ -109,6 +109,29 @@ struct format_impl {
     }
 
     //
+    // bool formatting
+    //
+
+    // template <class... Rest>
+    // static JUTIL_INLINE char *format(char *const d_f, const bool x, Rest &&...rest) noexcept
+    // {
+    //     static constexpr std::string_view false_ = "false";
+    //     static constexpr std::string_view true_  = "true";
+    //     return format_impl::format(d_f, x ? true_ : false_, static_cast<Rest &&>(rest)...);
+    // }
+
+    //
+    // char formatting
+    //
+
+    template <class... Rest>
+    static JUTIL_INLINE char *format(char *const d_f, const char x, Rest &&...rest) noexcept
+    {
+        *d_f = x;
+        return format_impl::format(d_f + 1, static_cast<Rest &&>(rest)...);
+    }
+
+    //
     // integer formatting
     //
 
@@ -220,6 +243,26 @@ struct maxsz_impl {
     {
         return sv.size() + maxsz_impl::maxsz(static_cast<Rest &&>(rest)...);
     }
+
+    //
+    // char maxsz
+    //
+
+    template <class... Rest>
+    static constexpr JUTIL_INLINE std::size_t maxsz(char, Rest &&...rest) noexcept
+    {
+        return 1 + maxsz_impl::maxsz(static_cast<Rest &&>(rest)...);
+    }
+
+    //
+    // bool maxsz
+    //
+
+    // template <class... Rest>
+    // static constexpr JUTIL_INLINE std::size_t maxsz(bool, Rest &&...rest) noexcept
+    // {
+    //     return 5 + maxsz_impl::maxsz(static_cast<Rest &&>(rest)...);
+    // }
 
     //
     // integer maxsz
