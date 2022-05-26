@@ -1,0 +1,9 @@
+[requires]
+boost/1.79.0
+robin-hood-hashing/3.11.5
+range-v3/0.11.0
+magic_enum/0.8.0
+libressl/3.5.2
+
+[generators]
+cmake
