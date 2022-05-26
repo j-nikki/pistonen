@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <concepts>
+#include <ranges>
 #include <string.h>
 
 #include "jutil.h"
@@ -17,6 +18,7 @@
 namespace format
 {
 namespace sc = std::chrono;
+namespace sr = std::ranges;
 struct hdr_time {};
 
 namespace detail
@@ -37,7 +39,7 @@ struct fmt_width_ty {
     T x;
 };
 template <std::size_t N, class T>
-constexpr JUTIL_INLINE fmt_width_ty<N, T> fmt_width(T &&x) noexcept
+JUTIL_CI fmt_width_ty<N, T> fmt_width(T &&x) noexcept
 {
     return {static_cast<T &&>(x)};
 }
@@ -79,33 +81,28 @@ struct formatter<T> {
 namespace detail
 {
 struct format_impl {
-    static JUTIL_INLINE char *format(char *const d_f) noexcept { return d_f; }
+    static JUTIL_CI char *format(char *const d_f) noexcept { return d_f; }
 
     //
     // string formatting
     //
 
     template <std::size_t N, class... Rest>
-    static JUTIL_INLINE char *format(char *const d_f, const char (&x)[N], Rest &&...rest) noexcept
+    static JUTIL_CI char *format(char *const d_f, const char (&x)[N], Rest &&...rest) noexcept
     {
-        memcpy(d_f, x, N - 1);
-        return format_impl::format(d_f + (N - 1), static_cast<Rest &&>(rest)...);
+        return format_impl::format(std::copy_n(x, N - 1, d_f), static_cast<Rest &&>(rest)...);
     }
 
     template <std::size_t N, class... Rest>
-    static JUTIL_INLINE char *format(char *const d_f, const char (*const x)[N],
-                                     Rest &&...rest) noexcept
+    static JUTIL_CI char *format(char *const d_f, const char (*const x)[N], Rest &&...rest) noexcept
     {
-        memcpy(d_f, x, N);
-        return format_impl::format(d_f + N, static_cast<Rest &&>(rest)...);
+        return format_impl::format(std::copy_n(*x, N - 1, d_f), static_cast<Rest &&>(rest)...);
     }
 
     template <class... Rest>
-    static JUTIL_INLINE char *format(char *const d_f, const std::string_view x,
-                                     Rest &&...rest) noexcept
+    static JUTIL_CI char *format(char *const d_f, const std::string_view x, Rest &&...rest) noexcept
     {
-        memcpy(d_f, x.data(), x.size());
-        return format_impl::format(d_f + x.size(), static_cast<Rest &&>(rest)...);
+        return format_impl::format(sr::copy(x, d_f).out, static_cast<Rest &&>(rest)...);
     }
 
     //
@@ -125,7 +122,7 @@ struct format_impl {
     //
 
     template <class... Rest>
-    static JUTIL_INLINE char *format(char *const d_f, const char x, Rest &&...rest) noexcept
+    static JUTIL_CI char *format(char *const d_f, const char x, Rest &&...rest) noexcept
     {
         *d_f = x;
         return format_impl::format(d_f + 1, static_cast<Rest &&>(rest)...);
@@ -190,7 +187,7 @@ struct format_impl {
     static JUTIL_NOINLINE char *format_timestamp(char *const d_f) noexcept;
 
     template <class... Rest>
-    static JUTIL_INLINE char *format(char *const d_f, hdr_time, Rest &&...rest) noexcept
+    static JUTIL_CI char *format(char *const d_f, hdr_time, Rest &&...rest) noexcept
     {
         return format_impl::format(format_timestamp(d_f), static_cast<Rest &&>(rest)...);
     }
@@ -200,7 +197,7 @@ struct format_impl {
     //
 
     template <custom_formatable T, class... Rest>
-    static JUTIL_INLINE char *format(char *const d_f, const T &x, Rest &&...rest) noexcept
+    static JUTIL_CI char *format(char *const d_f, const T &x, Rest &&...rest) noexcept
     {
         return format_impl::format(format::formatter<std::remove_cvref_t<T>>::format(d_f, x),
                                    static_cast<Rest &&>(rest)...);
@@ -208,7 +205,7 @@ struct format_impl {
 };
 } // namespace detail
 template <class... Ts>
-constexpr JUTIL_INLINE char *format(char *const d_f, Ts &&...xs) noexcept
+JUTIL_CI char *format(char *const d_f, Ts &&...xs) noexcept
 {
     return detail::format_impl::format(d_f, static_cast<Ts &&>(xs)...);
 }
@@ -220,26 +217,26 @@ constexpr JUTIL_INLINE char *format(char *const d_f, Ts &&...xs) noexcept
 namespace detail
 {
 struct maxsz_impl {
-    static constexpr JUTIL_INLINE std::size_t maxsz() noexcept { return 0; }
+    static JUTIL_CI std::size_t maxsz() noexcept { return 0; }
 
     //
     // string maxsz
     //
 
     template <std::size_t N, class... Rest>
-    static constexpr JUTIL_INLINE std::size_t maxsz(const char (&)[N], Rest &&...rest) noexcept
+    static JUTIL_CI std::size_t maxsz(const char (&)[N], Rest &&...rest) noexcept
     {
         return N - 1 + maxsz_impl::maxsz(static_cast<Rest &&>(rest)...);
     }
 
     template <std::size_t N, class... Rest>
-    static constexpr JUTIL_INLINE std::size_t maxsz(const char (*)[N], Rest &&...rest) noexcept
+    static JUTIL_CI std::size_t maxsz(const char (*)[N], Rest &&...rest) noexcept
     {
         return N + maxsz_impl::maxsz(static_cast<Rest &&>(rest)...);
     }
 
     template <class... Rest>
-    static constexpr JUTIL_INLINE std::size_t maxsz(std::string_view sv, Rest &&...rest) noexcept
+    static JUTIL_CI std::size_t maxsz(std::string_view sv, Rest &&...rest) noexcept
     {
         return sv.size() + maxsz_impl::maxsz(static_cast<Rest &&>(rest)...);
     }
@@ -249,7 +246,7 @@ struct maxsz_impl {
     //
 
     template <class... Rest>
-    static constexpr JUTIL_INLINE std::size_t maxsz(char, Rest &&...rest) noexcept
+    static JUTIL_CI std::size_t maxsz(char, Rest &&...rest) noexcept
     {
         return 1 + maxsz_impl::maxsz(static_cast<Rest &&>(rest)...);
     }
@@ -259,7 +256,7 @@ struct maxsz_impl {
     //
 
     // template <class... Rest>
-    // static constexpr JUTIL_INLINE std::size_t maxsz(bool, Rest &&...rest) noexcept
+    // static JUTIL_CI std::size_t maxsz(bool, Rest &&...rest) noexcept
     // {
     //     return 5 + maxsz_impl::maxsz(static_cast<Rest &&>(rest)...);
     // }
@@ -269,13 +266,13 @@ struct maxsz_impl {
     //
 
     template <std::integral T, class... Rest>
-    static constexpr JUTIL_INLINE std::size_t maxsz(T, Rest &&...rest) noexcept
+    static JUTIL_CI std::size_t maxsz(T, Rest &&...rest) noexcept
     {
         return 10 + std::is_signed_v<T> + maxsz_impl::maxsz(static_cast<Rest &&>(rest)...);
     }
 
     template <std::size_t N, class T, class... Rest>
-    static constexpr JUTIL_INLINE std::size_t maxsz(fmt_width_ty<N, T>, Rest &&...rest) noexcept
+    static JUTIL_CI std::size_t maxsz(fmt_width_ty<N, T>, Rest &&...rest) noexcept
     {
         return N + maxsz_impl::maxsz(static_cast<Rest &&>(rest)...);
     }
@@ -285,7 +282,7 @@ struct maxsz_impl {
     //
 
     template <class... Rest>
-    static constexpr JUTIL_INLINE std::size_t maxsz(hdr_time, Rest &&...rest) noexcept
+    static JUTIL_CI std::size_t maxsz(hdr_time, Rest &&...rest) noexcept
     {
         return maxsz_impl::maxsz(FMT_TIMESTAMP(0, 0, 0, 0, 0, 0, 0), static_cast<Rest &&>(rest)...);
     }
@@ -295,7 +292,7 @@ struct maxsz_impl {
     //
 
     template <custom_formatable T, class... Rest>
-    static constexpr JUTIL_INLINE std::size_t maxsz(const T &x, Rest &&...rest) noexcept
+    static JUTIL_CI std::size_t maxsz(const T &x, Rest &&...rest) noexcept
     {
         return format::formatter<std::remove_cvref_t<T>>::maxsz(x) +
                maxsz_impl::maxsz(static_cast<Rest &&>(rest)...);
@@ -303,7 +300,7 @@ struct maxsz_impl {
 };
 } // namespace detail
 template <class... Ts>
-[[nodiscard]] constexpr JUTIL_INLINE std::size_t maxsz(Ts &&...xs) noexcept
+[[nodiscard]] JUTIL_CI std::size_t maxsz(Ts &&...xs) noexcept
 {
     return detail::maxsz_impl::maxsz(static_cast<Ts &&>(xs)...);
 }

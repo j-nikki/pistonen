@@ -53,15 +53,14 @@ int main(int argc, char **argv)
     using options::help;
     using options::strs;
     try {
-        pnen::run_server_options opts{};
-        const char *logdir = nullptr;
+        static pnen::run_server_options opts{};
 
-        const auto ov      = options::make_visitor([](const std::string_view sv) {
+        static constexpr auto ov = options::make_visitor([](const std::string_view sv) {
             fprintf(stderr, "unknown argument '%.*s'\n", static_cast<int>(sv.size()), sv.data());
             return 1;
         }) //
             (strs("-port-num", "p")(help, "Set the port to listen on."),
-             [&](const std::string_view sv) {
+             [](const std::string_view sv) {
                  if (sscanf(sv.data(), "%hu", &opts.hostport) != 1) {
                      fprintf(stderr, "couldn't read port as int (\"%s\")", sv.data());
                      return 1;
@@ -79,13 +78,19 @@ int main(int argc, char **argv)
             (strs("-www-root", "w")(help, "Set path from which static files can be served."),
              [](const std::string_view sv) { g_wwwroot = sv.data(); }) //
             (strs("-log-dir", "l")(help, "Set path to dir into which log files are put."),
-             [&](const std::string_view sv) { logdir = sv.data(); }) //
+             [](const std::string_view sv) {
+                 if (!g_log.init(sv.data())) {
+                     fprintf(stderr, "couldn't access log dir \"%s\"\n", sv.data());
+                     return 1;
+                 }
+                 return 0;
+             }) //
             (strs("-cert", "c")(help, "Set path to certificate file."),
-             [&](const std::string_view cert) { opts.ssl_cert = cert.data(); }) //
+             [](const std::string_view cert) { opts.ssl_cert = cert.data(); }) //
             (strs("-pkey", "k")(help, "Set path to private key file."),
-             [&](const std::string_view pkey) { opts.ssl_pkey = pkey.data(); }) //
+             [](const std::string_view pkey) { opts.ssl_pkey = pkey.data(); }) //
             (strs("-pkpass", "P")(help, "Give pkey password, or 'prompt' for interactive prompt."),
-             [&](const std::string_view pass) { opts.pk_pass = pass; }) //
+             [](const std::string_view pass) { opts.pk_pass = pass; }) //
             ("vocabserv", "program for serving a static vocabulary listing");
 
         if (const auto res = options::visit(argc, argv, ov, options::default_visitor))
@@ -95,13 +100,6 @@ int main(int argc, char **argv)
         if (opts.pk_pass == "prompt")
             if (opts.pk_pass = get_pass(pwbuf, "Enter PEM pass phrase:"); opts.pk_pass.empty())
                 return 1;
-
-        if (!logdir) {
-            g_log.init();
-        } else if (!g_log.init(logdir)) {
-            fprintf(stderr, "couldn't access log dir \"%s\"\n", logdir);
-            return 1;
-        }
 
         DBGEXPR(printf("server will run on https://localhost:%hu...\n", opts.hostport));
         pnen::run_server(opts, handle_connection);

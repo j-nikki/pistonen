@@ -113,17 +113,18 @@ concept one_of = (std::same_as<T, Us> or ...);
 #define JUTIL_INLINE   inline __attribute__((always_inline))
 #define JUTIL_NOINLINE __attribute__((noinline))
 #if defined(__GNUC__) || defined(__GNUG__)
-#define JUTIL_PUSH_DIAG(X)       _Pragma("GCC diagnostic push") X
-#define JUTIL_POP_DIAG()         _Pragma("GCC diagnostic pop")
-#define JUTIL_WNO_UNUSED_VALUE   _Pragma("GCC diagnostic ignored \"-Wunused-value\"")
-#define JUTIL_WNO_UNUSED_PARAM   _Pragma("GCC diagnostic ignored \"-Wunused-parameter\"")
-#define JUTIL_WNO_SHADOW         _Pragma("GCC diagnostic ignored \"-Wshadow\"")
-#define JUTIL_WNO_PARENTHESES    _Pragma("GCC diagnostic ignored \"-Wparentheses\"")
-#define JUTIL_WNO_SEQUENCE       _Pragma("GCC diagnostic ignored \"-Wsequence-point\"")
-#define JUTIL_WNO_CCAST          _Pragma("GCC diagnostic ignored \"-Wold-style-cast\"")
-#define JUTIL_WNO_SUBOBJ_LINKAGE _Pragma("GCC diagnostic ignored \"-Wsubobject-linkage\"")
-#define JUTIL_WNO_EMPTY_BODY     _Pragma("GCC diagnostic ignored \"-Wempty-body\"")
-#define JUTIL_WNO_DANGLING_ELSE  _Pragma("GCC diagnostic ignored \"-Wdangling-else\"")
+#define JUTIL_PUSH_DIAG(X)        _Pragma("GCC diagnostic push") X
+#define JUTIL_POP_DIAG()          _Pragma("GCC diagnostic pop")
+#define JUTIL_WNO_UNUSED_VALUE    _Pragma("GCC diagnostic ignored \"-Wunused-value\"")
+#define JUTIL_WNO_UNUSED_PARAM    _Pragma("GCC diagnostic ignored \"-Wunused-parameter\"")
+#define JUTIL_WNO_UNUSED_VARIABLE _Pragma("GCC diagnostic ignored \"-Wunused-variable\"")
+#define JUTIL_WNO_SHADOW          _Pragma("GCC diagnostic ignored \"-Wshadow\"")
+#define JUTIL_WNO_PARENTHESES     _Pragma("GCC diagnostic ignored \"-Wparentheses\"")
+#define JUTIL_WNO_SEQUENCE        _Pragma("GCC diagnostic ignored \"-Wsequence-point\"")
+#define JUTIL_WNO_CCAST           _Pragma("GCC diagnostic ignored \"-Wold-style-cast\"")
+#define JUTIL_WNO_SUBOBJ_LINKAGE  _Pragma("GCC diagnostic ignored \"-Wsubobject-linkage\"")
+#define JUTIL_WNO_EMPTY_BODY      _Pragma("GCC diagnostic ignored \"-Wempty-body\"")
+#define JUTIL_WNO_DANGLING_ELSE   _Pragma("GCC diagnostic ignored \"-Wdangling-else\"")
 #else
 #error "unsupported compiler"
 #endif
@@ -172,7 +173,7 @@ concept one_of = (std::same_as<T, Us> or ...);
     ([&]<class BOOST_PP_CAT(JaeT, __LINE__)>(                                                      \
          BOOST_PP_CAT(JaeT, __LINE__) && BOOST_PP_CAT(e, __LINE__)) -> BOOST_PP_CAT(JaeT,          \
                                                                                     __LINE__) {    \
-        JUTIL_PUSH_DIAG(JUTIL_WNO_SHADOW);                                                         \
+        JUTIL_PUSH_DIAG(JUTIL_WNO_SHADOW JUTIL_WNO_UNUSED_VARIABLE);                               \
         static constexpr auto BOOST_PP_CAT(msg, __LINE__) = #E;                                    \
         return BOOST_PP_SEQ_FOLD_LEFT(                                                             \
             JUTIL_c_exp_fold_op,                                                                   \

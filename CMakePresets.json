@@ -23,7 +23,7 @@
             "name": "release",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Release",
-                "CMAKE_CXX_FLAGS_RELEASE": "-Ofast -fno-exceptions -fno-rtti -flto -DNDEBUG"
+                "CMAKE_CXX_FLAGS_RELEASE": "-Ofast -fno-rtti -flto -DNDEBUG"
             }
         },
         {

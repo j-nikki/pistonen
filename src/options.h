@@ -28,6 +28,10 @@ concept arg_visitor = requires(T &&f, string_view sv) {
 
 namespace detail
 {
+//
+// helpers
+//
+
 template <class... Args>
 JUTIL_CI int visit(auto &&v, Args &&...args) noexcept(noexcept(v(static_cast<Args &&>(args)...)))
 {
@@ -76,12 +80,6 @@ JUTIL_CI std::tuple<Ts..., U> tpl_app(std::tuple<Ts...> &&tpl, U &&x,
 constexpr inline struct help_tag {
 } help;
 
-template <class>
-struct nstr;
-template <std::size_t N>
-struct nstr<const char (&)[N]> : std::integral_constant<std::size_t, N - 1> {
-};
-
 template <std::size_t N>
 JUTIL_CI auto slit2arr(const char (&xs)[N]) noexcept
 {
@@ -90,6 +88,18 @@ JUTIL_CI auto slit2arr(const char (&xs)[N]) noexcept
         res[i] = xs[i];
     return res;
 }
+
+constexpr inline auto each = []<class... Ts, class F>(const std::tuple<Ts...> &xs, F &&f_) {
+    [&]<std::size_t... Is>(std::index_sequence<Is...>, F && f)
+    {
+        (f(std::get<Is>(xs), std::bool_constant<Is == sizeof...(Ts) - 1>{}), ...);
+    }
+    (std::index_sequence_for<Ts...>{}, static_cast<F &&>(f_));
+};
+
+//
+// strs
+//
 
 template <class...>
 struct strs_ty;
@@ -117,6 +127,58 @@ JUTIL_CI auto strs(Ts &&...xs_) noexcept
     return strs_ty{std::tuple{slit2arr(static_cast<Ts &&>(xs_))...}, std::array<char, 0>{}};
 }
 
+//
+// help builder, run twice; (1) find required buffer size, (2) populate the buffer
+//
+
+JUTIL_CI void build_help(auto &&pfs_, auto &&pss_, auto &&name_, auto &&what_, auto &&long_,
+                         auto &&f, auto &&g)
+{
+    f("\033[1mNAME\033[0m\n    ", name_, " - ", what_, "\n\n\033[1mSYNOPSIS\033[0m\n    ", name_);
+    each(pfs_, [&](const auto &pf, auto) {
+        f(" [");
+        each(pf.ss, [&](const auto &s, auto l) { f("\033[1m-", s, "\033[0m", (l ? "]" : "|")); });
+    });
+    each(pss_, [&](const auto &ps, auto) {
+        f(" [");
+        each(ps.ss,
+             [&](const auto &s, auto l) { f("\033[1m-", s, "\033[0m", (l ? " arg]" : "|")); });
+    });
+    if (!long_.empty())
+        f("\n\n\033[1mDESCRIPTION\033[0m\n    ", long_);
+    f("\n\n\033[1mOPTIONS\n    --help\033[0m, \033[1m-h\033[0m               Print "
+      "usage information and exit.\n");
+    each(pfs_, [&](const auto &pf, auto) {
+        f("    \033[1m");
+        const auto n0 = g();
+        each(pf.ss, [&](const auto &s, auto l) { f("-", s, (l ? "" : ", ")); });
+        auto n = g() - n0;
+        f("\033[0m");
+        if (n > 25)
+            f('\n'), n = 0;
+        for (; n < 25; ++n)
+            f(' ');
+        f(pf.h, '\n');
+    });
+    each(pss_, [&](const auto &ps, auto) {
+        f("    ");
+        auto n0 = g();
+        each(ps.ss, [&](const auto &s, auto l) {
+            n0 += 8, f("\033[1m-", s, "\033[0m arg", (l ? "" : ", "));
+        });
+        auto n = g() - n0;
+        if (n > 25)
+            f('\n'), n = 0;
+        for (; n < 25; ++n)
+            f(' ');
+        f(ps.h, '\n');
+    });
+}
+
+//
+// visitor selection
+//
+
 constexpr inline auto select_visitor = [](auto &&v, const string_view sv, auto arg_) {
     return visit_idx(
         v.pfs_, sv, [&](auto I) { return visit(std::get<I>(v.fs_)); },
@@ -131,71 +193,34 @@ constexpr inline auto select_visitor = [](auto &&v, const string_view sv, auto a
         });
 };
 
-constexpr inline auto each = []<class... Ts, class F>(const std::tuple<Ts...> &xs, F &&f_) {
-    [&]<std::size_t... Is>(std::index_sequence<Is...>, F && f)
-    {
-        (f(std::get<Is>(xs), std::bool_constant<Is == sizeof...(Ts) - 1>{}), ...);
-    }
-    (std::index_sequence_for<Ts...>{}, static_cast<F &&>(f_));
-};
-
-template <class Vs>
+template <class Vs, std::size_t NN, std::size_t NW, std::size_t NL>
 struct visitor_selector {
     Vs vs_;
-    string_view name_;
-    string_view what_;
-    string_view long_;
-    JUTIL_CI void operator()(help_tag, auto &b) const
-    {
-        // TODO: build this at compile-time
-        b.append("\033[1mNAME\033[0m\n    ", name_, " - ", what_,
-                 "\n\n\033[1mSYNOPSIS\033[0m\n    ", name_);
-        each(vs_.pfs_, [&](const auto &pf, auto) {
-            b.append(" [");
-            each(pf.ss, [&](const auto &s, auto l) {
-                b.append("\033[1m-", s, "\033[0m", (l ? "]" : "|"));
-            });
-        });
-        each(vs_.pss_, [&](const auto &ps, auto) {
-            b.append(" [");
-            each(ps.ss, [&](const auto &s, auto l) {
-                b.append("\033[1m-", s, "\033[0m", (l ? " arg]" : "|"));
-            });
-        });
-        if (!long_.empty())
-            b.append("\n\n\033[1mDESCRIPTION\033[0m\n    ", long_);
-        b.append("\n\n\033[1mOPTIONS\n    --help\033[0m, \033[1m-h\033[0m               Print "
-                 "usage information and exit.\n");
-        each(vs_.pfs_, [&](const auto &pf, auto) {
-            b.append("    \033[1m");
-            const auto n0 = b.size();
-            each(pf.ss, [&](const auto &s, auto l) { b.append("-", s, (l ? "" : ", ")); });
-            auto n = b.size() - n0;
-            b.append("\033[0m");
-            if (n > 25) {
-                b.append('\n');
-                n = 0;
-            }
-            for (; n < 25; ++n)
-                b.append(' ');
-            b.append(pf.h, '\n');
-        });
-        each(vs_.pss_, [&](const auto &ps, auto) {
-            b.append("    ");
-            auto n0 = b.size();
-            each(ps.ss, [&](const auto &s, auto l) {
-                n0 += 8, b.append("\033[1m-", s, "\033[0m arg", (l ? "" : ", "));
-            });
-            auto n = b.size() - n0;
-            if (n > 25) {
-                b.append('\n');
-                n = 0;
-            }
-            for (; n < 25; ++n)
-                b.append(' ');
-            b.append(ps.h, '\n');
-        });
-    }
+    std::array<char, NN> name_;
+    std::array<char, NW> what_;
+    std::array<char, NL> long_;
+    static constexpr auto nhelp = [] {
+        std::size_t res = 0;
+        build_help(
+            decltype(vs_.pfs_){}, decltype(vs_.pss_){}, std::array<char, NN>{},
+            std::array<char, NW>{}, std::array<char, NL>{},
+            [&]<class... Args>(Args &&...args) {
+                res += format::maxsz(static_cast<Args &&>(args)...);
+            },
+            [&] { return res; });
+        return res;
+    }();
+    std::array<char, nhelp> help = [&] {
+        std::array<char, nhelp> res;
+        char *it = res.data();
+        build_help(
+            vs_.pfs_, vs_.pss_, name_, what_, long_,
+            [&]<class... Args>(Args &&...args) {
+                it = format::format(it, static_cast<Args &&>(args)...);
+            },
+            [&] { return static_cast<std::size_t>(it - res.data()); });
+        return res;
+    }();
     JUTIL_CI int operator()(const string_view sv, auto arg_) const //
         noexcept(noexcept(select_visitor(vs_, sv, arg_)))
     {
@@ -207,6 +232,10 @@ struct visitor_selector {
         return select_visitor(vs_, sv, arg_);
     }
 };
+
+//
+// visitor_maker
+//
 
 template <class, class, class, class, class>
 struct visitor_maker;
@@ -220,11 +249,29 @@ struct visitor_maker<std::tuple<PFs...>, std::tuple<PSs...>, std::tuple<Fs...>, 
     std::tuple<Fs...> fs_;
     std::tuple<Ss...> ss_;
     Unk unk_;
-    JUTIL_CI auto operator()(const string_view name, const string_view what,
-                             const string_view long_ = {}) &&noexcept -> visitor_selector<this_type>
+
+    //
+    // finalize
+    //
+
+    template <std::size_t NN, std::size_t NW, std::size_t NL>
+    JUTIL_CI auto operator()(const char (&name)[NN], const char (&what)[NW],
+                             const char (&long_)[NL]) &&noexcept
+        -> visitor_selector<this_type, NN - 1, NW - 1, NL - 1>
     {
-        return {static_cast<this_type &&>(*this), name, what, long_};
+        return {static_cast<this_type &&>(*this), slit2arr(name), slit2arr(what), slit2arr(long_)};
     }
+    template <std::size_t NN, std::size_t NW>
+    JUTIL_CI auto operator()(const char (&name)[NN], const char (&what)[NW]) &&noexcept
+        -> visitor_selector<this_type, NN - 1, NW - 1, 0>
+    {
+        return {static_cast<this_type &&>(*this), slit2arr(name), slit2arr(what), {}};
+    }
+
+    //
+    // add command
+    //
+
     template <jutil::predicate<string_view> Pr, jutil::callable<string_view> V>
     JUTIL_CI auto operator()(Pr &&pr,
                              V &&v) && // TODO: noexcept(...)
@@ -261,12 +308,20 @@ using detail::strs;
 
 constexpr inline detail::visitor_fbdef default_visitor;
 
+//
+// make_visitor: starts visitor making
+//
+
 template <jutil::callable<string_view> Unknown = detail::visitor_fbdef>
 constexpr auto make_visitor(Unknown &&unk = {})
     -> detail::visitor_maker<std::tuple<>, std::tuple<>, std::tuple<>, std::tuple<>, Unknown>
 {
     return {{}, {}, {}, {}, static_cast<Unknown &&>(unk)};
 }
+
+//
+// visit: invokes visitor with program input
+//
 
 JUTIL_CI int visit(int argc, char *argv[], opt_visitor auto &&ov, arg_visitor auto &&av) noexcept(
     noexcept(av(string_view{})) &&noexcept(ov(string_view{}, [] -> arg_ty { return 0; })))
@@ -284,10 +339,9 @@ JUTIL_CI int visit(int argc, char *argv[], opt_visitor auto &&ov, arg_visitor au
             while (++f != l)
                 o_go_visit(av, string_view{*f});
             break;
-        } else if (opt == "-help" || opt == "h") {
-            buffer b;
-            ov(help, b);
-            printf("%.*s\n", static_cast<int>(b.size()), b.data());
+        } else if (opt == "--help" || opt == "-h") {
+            printf("%.*s\n", static_cast<int>(ov.help.size()), ov.help.data());
+            return 1;
         } else {
             o_go_visit(ov, opt.substr(1), [&] -> arg_ty {
                 if (++f == l) {

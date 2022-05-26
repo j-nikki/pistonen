@@ -24,7 +24,7 @@ ts = ' '.join(str(os.stat(x).st_mtime_ns)
 
 if not os.path.exists('build/CMakeCache.txt') or read_or('.ts') != ts:
     check_call(['cmake', '-Wno-dev', '-S', '.', '-B', 'build',
-               '--preset', read_or(".cpreset", "debug")])
+               '--preset', read_or(".cpreset", "debug").splitlines()[0]])
     with open('.ts', 'w') as f:
         f.write(ts)
 
