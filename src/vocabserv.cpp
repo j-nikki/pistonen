@@ -28,22 +28,22 @@ auto echo_off(auto &&f) -> decltype(f())
     return res;
 }
 
-std::string_view get_pass(char *const buf, const std::size_t nbuf, const char *prompt) noexcept
+const char *get_pass(char *const buf, const std::size_t nbuf, const char *prompt) noexcept
 {
-    if (prompt)
-        printf("%s", prompt);
+    if (prompt) printf("%s", prompt);
     return echo_off([=] {
-        const auto bufl = buf + nbuf;
+        const auto bufl = buf + nbuf - 1;
         auto dit        = buf;
         for (char c; dit != bufl && (c = getc(stdin)) != EOF && c != '\n';)
             *dit++ = c;
         putc('\n', stdout);
-        return std::string_view{buf, dit};
+        *dit = '\0';
+        return buf;
     });
 }
 
 template <std::size_t N>
-std::string_view get_pass(char (&buf)[N], const char *prompt) noexcept
+const char *get_pass(char (&buf)[N], const char *prompt) noexcept
 {
     return get_pass(buf, N, prompt);
 }
@@ -90,16 +90,14 @@ int main(int argc, char **argv)
             (strs("-pkey", "k")(help, "Set path to private key file."),
              [](const std::string_view pkey) { opts.ssl_pkey = pkey.data(); }) //
             (strs("-pkpass", "P")(help, "Give pkey password, or 'prompt' for interactive prompt."),
-             [](const std::string_view pass) { opts.pk_pass = pass; }) //
+             [](const std::string_view pass) { opts.pk_pass = pass.data(); }) //
             ("vocabserv", "program for serving a static vocabulary listing");
 
-        if (const auto res = options::visit(argc, argv, ov, options::default_visitor))
-            return res;
+        if (const auto res = options::visit(argc, argv, ov, options::default_visitor)) return res;
 
         char pwbuf[128];
-        if (opts.pk_pass == "prompt")
-            if (opts.pk_pass = get_pass(pwbuf, "Enter PEM pass phrase:"); opts.pk_pass.empty())
-                return 1;
+        if (opts.pk_pass && strcmp(opts.pk_pass, "prompt") == 0)
+            opts.pk_pass = get_pass(pwbuf, "Enter PEM pass phrase:");
 
         DBGEXPR(printf("server will run on https://localhost:%hu...\n", opts.hostport));
         pnen::run_server(opts, handle_connection);
@@ -114,8 +112,7 @@ int main(int argc, char **argv)
 bool detail::vocab::init(const char *path)
 {
     const auto file = fopen(path, "rb");
-    if (!file)
-        return false;
+    if (!file) return false;
     DEFER[=] { fclose(file); };
     fseek(file, 0, SEEK_END);
     const auto sz = static_cast<std::size_t>(ftell(file));

@@ -17,14 +17,28 @@ struct vocab {
 };
 
 struct log {
-    JUTIL_INLINE bool init() const noexcept { return true; }
     bool init(const char *dir);
     template <class... Args>
-    JUTIL_INLINE void print(Args &&...args) noexcept
+    JUTIL_INLINE void print(Args &&...args)
     {
         std::scoped_lock lk{mtx};
         const auto len = buf.put(static_cast<Args &&>(args)..., "\n");
         fwrite(buf.data(), sizeof(char), len, file);
+    }
+    template <class... Args>
+    JUTIL_INLINE void error(Args &&...args)
+    {
+        return print(static_cast<Args &&>(args)...);
+    }
+    template <class... Args>
+    JUTIL_INLINE void info(Args &&...args)
+    {
+        return print(static_cast<Args &&>(args)...);
+    }
+    template <class... Args>
+    JUTIL_INLINE void warn(Args &&...args)
+    {
+        return print(static_cast<Args &&>(args)...);
     }
     ~log()
     {

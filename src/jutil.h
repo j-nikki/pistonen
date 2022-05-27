@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <array>
-#include <bit>
 #include <boost/preprocessor/cat.hpp>
 #include <boost/preprocessor/comparison/equal.hpp>
 #include <boost/preprocessor/control/if.hpp>
@@ -13,11 +12,9 @@
 #include <boost/preprocessor/seq/for_each_i.hpp>
 #include <boost/preprocessor/stringize.hpp>
 #include <boost/preprocessor/variadic/to_seq.hpp>
-#include <cassert>
 #include <concepts>
 #include <limits.h>
 #include <memory>
-#include <new>
 #include <ranges>
 #include <span>
 #include <type_traits>
@@ -59,6 +56,12 @@ struct deferty {
     }
 };
 } // namespace impl
+
+template <class T, template <class...> class Tmpl>
+concept instance_of = requires(std::remove_cvref_t<T> &x)
+{
+    []<class... Ts>(Tmpl<Ts...> &) {}(x);
+};
 
 template <class To, class From>
 concept static_castable = requires(From &&x)
@@ -333,8 +336,7 @@ requires(std::sortable<sr::iterator_t<R>, Comp, Proj> &&requires(R r) {
 {
     const auto l = sr::next(sr::begin(r), sr::size(r) - 1);
     for (auto it = sr::begin(r);; ++it, assert(it != sr::end(r)))
-        if (sr::nth_element(it, it, l, comp, proj); pred(*it))
-            return it;
+        if (sr::nth_element(it, it, l, comp, proj); pred(*it)) return it;
 }
 template <sr::random_access_range R, class Comp, class Proj, class Pred, class Snt>
 requires(std::sortable<sr::iterator_t<R>, Comp, Proj> &&requires(R r) {
@@ -494,8 +496,7 @@ JUTIL_CI void *to_ptr(uintptr_t x) noexcept { return std::bit_cast<void *>(x); }
 template <std::size_t Factor = 16>
 JUTIL_CI void duffs(std::integral auto n, callable auto &&f) noexcept(noexcept(f()))
 {
-    if (!n)
-        return;
+    if (!n) return;
 #define JUTIL_dd_c(z, j, fact)                                                                     \
     case (j ? fact - j : 0):                                                                       \
         f();                                                                                       \
@@ -605,16 +606,14 @@ constexpr call_result<F &>
 call_until(F &&f, std::predicate<call_result<F &>> auto pr) noexcept(noexcept(pr(f())))
 {
     for (;;)
-        if (decltype(auto) res = f(); pr(res))
-            return static_cast<decltype(res)>(res);
+        if (decltype(auto) res = f(); pr(res)) return static_cast<decltype(res)>(res);
 }
 template <callable<> F>
 constexpr call_result<F &>
 call_while(F &&f, std::predicate<call_result<F &>> auto pr) noexcept(noexcept(pr(f())))
 {
     for (;;)
-        if (decltype(auto) res = f(); !pr(res))
-            return static_cast<decltype(res)>(res);
+        if (decltype(auto) res = f(); !pr(res)) return static_cast<decltype(res)>(res);
 }
 template <callable<> F>
 constexpr void call_n(F &&f, std::integral auto n) noexcept(noexcept(f()))
@@ -730,10 +729,8 @@ is_heap_eytz(I f, S l, Comp comp = {},
     const auto n = static_cast<IdxTy>(l - f);
     for (IdxTy i = 1; i / 2 < n; ++i) {
         const auto li = i * 2, ri = i * 2 + 1;
-        if (li < n && !comp(proj(f[li]), proj(f[i])))
-            return false;
-        if (ri < n && !comp(proj(f[i]), proj(f[ri])))
-            return false;
+        if (li < n && !comp(proj(f[li]), proj(f[i]))) return false;
+        if (ri < n && !comp(proj(f[i]), proj(f[ri]))) return false;
     }
     return true;
 }
@@ -767,8 +764,7 @@ JUTIL_CI void push_eytz(I f, S l, Comp comp = {},
                         Proj proj = {}) noexcept(noexcept(comp(proj(f[1]), proj(f[1]))))
 {
     const auto xi = static_cast<IdxTy>(l - f) - 1;
-    if (xi == 1)
-        return;
+    if (xi == 1) return;
     const auto hm1         = static_cast<IdxTy>(bsr(to_unsigned(xi - 1)));
     const IdxTy ctzxormsk1 = ~(2u << hm1), ctzxormsk2 = ~(1u << hm1);
     for (;;) {
@@ -777,8 +773,7 @@ JUTIL_CI void push_eytz(I f, S l, Comp comp = {},
         duffs<DD>(hm1, [&] { lb = (lb * 2) + comp(proj(f[lb]), proj(f[xi])); });
         const auto lblt = lb < xi;
         lb              = !lblt ? lb : lb * 2 + comp(proj(f[lb]), proj(f[xi]));
-        if (lb == xi)
-            break;
+        if (lb == xi) break;
         const auto ctzxormsk = lblt ? ctzxormsk1 : ctzxormsk2;
         const auto nz        = static_cast<IdxTy>(ctz(to_unsigned((lb & 1) ? lb ^ ctzxormsk : lb)));
         std::iter_value_t<I> tmp{sr::iter_move(f + (lb >> nz))};
@@ -798,8 +793,7 @@ requires std::is_lvalue_reference_v<call_result<Proj &, sr::range_reference_t<R>
 {
     const auto it = sr::begin(r);
     for (std::size_t i = 0;; ++i, assert(i != sr::size(r)))
-        if (proj(it[i]) == x)
-            return i;
+        if (proj(it[i]) == x) return i;
 }
 template <std::input_iterator It, class T, class Proj = std::identity>
 requires std::is_lvalue_reference_v<call_result<Proj &, std::iter_reference_t<It>>>
@@ -820,8 +814,7 @@ template <std::random_access_iterator It, class Pred, class Proj = std::identity
                                                       Proj proj = {})
 {
     for (std::size_t i = 0;; ++i)
-        if (CHECK(i != static_cast<std::size_t>(sr::distance(f, l))), pred(proj(f[i])))
-            return i;
+        if (CHECK(i != static_cast<std::size_t>(sr::distance(f, l))), pred(proj(f[i]))) return i;
 }
 template <sr::random_access_range R, class Pred, class Proj = std::identity>
 [[nodiscard]] JUTIL_CI std::size_t find_if_always_idx(R &r, Pred pred, Proj proj = {})
@@ -984,6 +977,52 @@ constexpr inline getter<1> snd{};
 constexpr inline auto abs_ = L(x < 0 ? -x : x);
 
 //
+// each
+//
+namespace detail
+{
+struct each_caller_ty {
+    template <class T, class U, class V, callable<T &&, U &&, V &&> F>
+    JUTIL_CI void operator()(T &&x, U, V, F &&f) const
+        noexcept(noexcept(static_cast<F &&>(f)(static_cast<T &&>(x), U{}, V{})))
+    {
+        static_cast<F &&>(f)(static_cast<T &&>(x), U{}, V{});
+    }
+    template <class T, class U, class V, callable<T &&, U &&> F>
+    JUTIL_CI void operator()(T &&x, U, V, F &&f) const
+        noexcept(noexcept(static_cast<F &&>(f)(static_cast<T &&>(x), U{})))
+    {
+        static_cast<F &&>(f)(static_cast<T &&>(x), U{});
+    }
+    template <class T, class U, class V, callable<T &&> F>
+    JUTIL_CI void operator()(T &&x, U, V, F &&f) const
+        noexcept(noexcept(static_cast<F &&>(f)(static_cast<T &&>(x))))
+    {
+        static_cast<F &&>(f)(static_cast<T &&>(x));
+    }
+};
+constexpr inline each_caller_ty each_caller;
+template <class T, std::size_t... Is>
+JUTIL_CI void each_impl(T &&xs, auto &&f, std::index_sequence<Is...>) noexcept(noexcept(
+    (each_caller(std::get<Is>(static_cast<T &&>(xs)), std::integral_constant<std::size_t, Is>{},
+                 std::bool_constant<Is == sizeof...(Is) - 1>{}, f),
+     ...)))
+{
+    (each_caller(std::get<Is>(static_cast<T &&>(xs)), std::integral_constant<std::size_t, Is>{},
+                 std::bool_constant<Is == sizeof...(Is) - 1>{}, f),
+     ...);
+};
+} // namespace detail
+template <class T, class F>
+JUTIL_CI void each(T &&xs, F &&f) noexcept(noexcept(
+    detail::each_impl(static_cast<T &&>(xs), static_cast<F &&>(f),
+                      std::make_index_sequence<std::tuple_size_v<std::remove_cvref_t<T>>>{})))
+{
+    detail::each_impl(static_cast<T &&>(xs), static_cast<F &&>(f),
+                      std::make_index_sequence<std::tuple_size_v<std::remove_cvref_t<T>>>{});
+}
+
+//
 // caster
 //
 template <class T>
@@ -1007,7 +1046,11 @@ constexpr inline caster<T> cast{};
                                                                BOOST_PP_CAT(Ts, __LINE__) &&>(     \
                                                                BOOST_PP_CAT(xs, __LINE__))...)))   \
         -> decltype(F(__VA_ARGS__ __VA_OPT__(, ) static_cast<BOOST_PP_CAT(Ts, __LINE__) &&>(       \
-            BOOST_PP_CAT(xs, __LINE__))...)) {                                                     \
+            BOOST_PP_CAT(xs, __LINE__))...)) requires(requires {                                   \
+        F(__VA_ARGS__ __VA_OPT__(, ) static_cast<BOOST_PP_CAT(Ts, __LINE__) &&>(                   \
+            BOOST_PP_CAT(xs, __LINE__))...);                                                       \
+    })                                                                                             \
+    {                                                                                              \
         return F(__VA_ARGS__ __VA_OPT__(, ) static_cast<BOOST_PP_CAT(Ts, __LINE__) &&>(            \
             BOOST_PP_CAT(xs, __LINE__))...);                                                       \
     }

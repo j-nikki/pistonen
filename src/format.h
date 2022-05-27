@@ -31,8 +31,68 @@ template <std::size_t N>
 constexpr auto os = ([]<std::size_t... Is>(std::index_sequence<Is...>)->std::array<const char, N> {
     return {(Is, '0')...};
 })(std::make_index_sequence<N>{});
+
+//
+// fx
+//
+
+template <char...>
+struct cs {
+};
+template <class, class, class>
+struct fx_ty;
+template <char... Cs0, char... Cs1, class T>
+struct fx_ty<cs<Cs0...>, cs<Cs1...>, T> {
+    static constexpr std::size_t ncs = sizeof...(Cs0) + sizeof...(Cs1);
+    static constexpr std::array cs0{Cs0...};
+    static constexpr std::array cs1{Cs1...};
+    T x;
+};
 } // namespace detail
-#define FMT_STR(Idx) reinterpret_cast<const char(*)[3]>(&detail::strs[(Idx)*3])
+
+inline namespace fx
+{
+template <class T>
+JUTIL_CI auto bold(T &&x) noexcept
+    -> detail::fx_ty<detail::cs<'\033', '[', '1', 'm'>, detail::cs<'\033', '[', '2', '2', 'm'>, T>
+{
+    return {static_cast<T &&>(x)};
+}
+template <char... Cs, class T>
+JUTIL_CI auto fg(T &&x, detail::cs<Cs...> = {}) noexcept
+    -> detail::fx_ty<detail::cs<'\033', '[', '3', '8', ';', '5', ';', Cs..., 'm'>,
+                     detail::cs<'\033', '[', '3', '9', 'm'>, T>
+{
+    return {static_cast<T &&>(x)};
+}
+template <char... Cs, class T>
+JUTIL_CI auto bg(T &&x, detail::cs<Cs...> = {}) noexcept
+    -> detail::fx_ty<detail::cs<'\033', '[', '4', '8', ';', '5', ';', Cs..., 'm'>,
+                     detail::cs<'\033', '[', '4', '9', 'm'>, T>
+{
+    return {static_cast<T &&>(x)};
+}
+constexpr inline detail::cs<'0'> black;
+constexpr inline detail::cs<'1'> red;
+constexpr inline detail::cs<'2'> green;
+constexpr inline detail::cs<'3'> yellow;
+constexpr inline detail::cs<'4'> blue;
+constexpr inline detail::cs<'5'> magenta;
+constexpr inline detail::cs<'6'> cyan;
+constexpr inline detail::cs<'7'> white;
+constexpr inline detail::cs<'8'> bright_black;
+constexpr inline detail::cs<'9'> bright_red;
+constexpr inline detail::cs<'1', '0'> bright_green;
+constexpr inline detail::cs<'1', '1'> bright_yellow;
+constexpr inline detail::cs<'1', '2'> bright_blue;
+constexpr inline detail::cs<'1', '3'> bright_magenta;
+constexpr inline detail::cs<'1', '4'> bright_cyan;
+constexpr inline detail::cs<'1', '5'> bright_white;
+} // namespace fx
+
+//
+// fmt_width
+//
 
 template <std::size_t N, std::integral T>
 struct fmt_width_ty {
@@ -44,6 +104,7 @@ JUTIL_CI fmt_width_ty<N, T> fmt_width(T &&x) noexcept
     return {static_cast<T &&>(x)};
 }
 
+#define FMT_STR(Idx) reinterpret_cast<const char(*)[3]>(&detail::strs[(Idx)*3])
 #define FMT_TIMESTAMP(DIdx, DD, MIdx, YYYY, H, M, S)                                               \
     FMT_STR(DIdx), ", ", fmt_width<2>(DD), " ", FMT_STR((MIdx) + 7), " ", fmt_width<4>(YYYY), " ", \
         fmt_width<2>(H), ":", fmt_width<2>(M), ":", fmt_width<2>(S), " GMT"
@@ -129,6 +190,16 @@ struct format_impl {
     }
 
     //
+    // fx formatting
+    //
+
+    template <jutil::instance_of<fx_ty> T, class... Rest>
+    static JUTIL_CI char *format(char *const d_f, T &&fx, Rest &&...rest) noexcept
+    {
+        return format_impl::format(d_f, fx.cs0, fx.x, fx.cs1, static_cast<Rest &&>(rest)...);
+    }
+
+    //
     // integer formatting
     //
 
@@ -155,8 +226,7 @@ struct format_impl {
 
         [[maybe_unused]] const bool neg = x.x < 0;
         if constexpr (std::is_signed_v<T>)
-            if (neg)
-                x.x = -x.x;
+            if (neg) x.x = -x.x;
 
         // algorithm taken from: https://jk-jeon.github.io/posts/2022/02/jeaiii-algorithm/
         auto y = ((x.x * uint64_t{720575941}) >> 24) + 1;
@@ -174,8 +244,7 @@ struct format_impl {
 #undef EAT_NUM
 
         if constexpr (std::is_signed_v<T>)
-            if (neg)
-                *d_f = '-';
+            if (neg) *d_f = '-';
 
         return format_impl::format(d_f + N, static_cast<Rest &&>(rest)...);
     }
@@ -190,6 +259,23 @@ struct format_impl {
     static JUTIL_CI char *format(char *const d_f, hdr_time, Rest &&...rest) noexcept
     {
         return format_impl::format(format_timestamp(d_f), static_cast<Rest &&>(rest)...);
+    }
+
+    //
+    // tuple formatting
+    //
+
+    template <jutil::instance_of<std::tuple> T, class... Rest>
+    static JUTIL_CI char *format(char *const d_f, T &&xs_, Rest &&...rest_) noexcept
+    {
+        return [=]<std::size_t... Is>(T && xs, std::index_sequence<Is...>, Rest && ...rest)
+        {
+            return format_impl::format(d_f, std::get<Is>(static_cast<T &&>(xs))...,
+                                       static_cast<Rest &&>(rest)...);
+        }
+        (static_cast<T &&>(xs_),
+         std::make_index_sequence<std::tuple_size_v<std::remove_cvref_t<T>>>{},
+         static_cast<Rest &&>(rest_)...);
     }
 
     //
@@ -278,6 +364,16 @@ struct maxsz_impl {
     }
 
     //
+    // fx maxsz
+    //
+
+    template <jutil::instance_of<fx_ty> T, class... Rest>
+    static JUTIL_CI std::size_t maxsz(T &&fx, Rest &&...rest) noexcept
+    {
+        return std::remove_cvref_t<T>::ncs + maxsz_impl::maxsz(fx.x, static_cast<Rest &&>(rest)...);
+    }
+
+    //
     // timestamp maxsz
     //
 
@@ -285,6 +381,23 @@ struct maxsz_impl {
     static JUTIL_CI std::size_t maxsz(hdr_time, Rest &&...rest) noexcept
     {
         return maxsz_impl::maxsz(FMT_TIMESTAMP(0, 0, 0, 0, 0, 0, 0), static_cast<Rest &&>(rest)...);
+    }
+
+    //
+    // tuple maxsz
+    //
+
+    template <jutil::instance_of<std::tuple> T, class... Rest>
+    static JUTIL_CI std::size_t maxsz(T &&xs_, Rest &&...rest_) noexcept
+    {
+        return []<std::size_t... Is>(T && xs, std::index_sequence<Is...>, Rest && ...rest)
+        {
+            return maxsz_impl::maxsz(std::get<Is>(static_cast<T &&>(xs))...,
+                                     static_cast<Rest &&>(rest)...);
+        }
+        (static_cast<T &&>(xs_),
+         std::make_index_sequence<std::tuple_size_v<std::remove_cvref_t<T>>>{},
+         static_cast<Rest &&>(rest_)...);
     }
 
     //
@@ -299,6 +412,7 @@ struct maxsz_impl {
     }
 };
 } // namespace detail
+
 template <class... Ts>
 [[nodiscard]] JUTIL_CI std::size_t maxsz(Ts &&...xs) noexcept
 {

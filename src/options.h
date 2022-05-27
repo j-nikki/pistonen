@@ -6,6 +6,8 @@
 
 #include "jutil.h"
 
+#include "lmacro_begin.h"
+
 namespace options
 {
 using std::string_view;
@@ -89,14 +91,6 @@ JUTIL_CI auto slit2arr(const char (&xs)[N]) noexcept
     return res;
 }
 
-constexpr inline auto each = []<class... Ts, class F>(const std::tuple<Ts...> &xs, F &&f_) {
-    [&]<std::size_t... Is>(std::index_sequence<Is...>, F && f)
-    {
-        (f(std::get<Is>(xs), std::bool_constant<Is == sizeof...(Ts) - 1>{}), ...);
-    }
-    (std::index_sequence_for<Ts...>{}, static_cast<F &&>(f_));
-};
-
 //
 // strs
 //
@@ -128,51 +122,48 @@ JUTIL_CI auto strs(Ts &&...xs_) noexcept
 }
 
 //
-// help builder, run twice; (1) find required buffer size, (2) populate the buffer
+// help builder, run twice; (1) to find required buffer size, and (2) to populate the buffer
 //
 
+constexpr inline auto fxfwd =
+    jutil::overload{FREF(slit2arr), []<class T>(T &&x) { return static_cast<T &&>(x); }};
+constexpr inline auto fxb = []<class... Ts>(Ts &&...xs) {
+    return format::fg(format::bold(std::tuple{fxfwd(static_cast<Ts &&>(xs))...}),
+                      format::bright_cyan);
+};
+constexpr inline auto nbcs = format::maxsz(fxb());
+constexpr inline auto fxa  = []<class... Ts>(Ts &&...xs) {
+    return format::fg(format::bold(std::tuple{fxfwd(static_cast<Ts &&>(xs))...}),
+                       format::bright_green);
+};
+constexpr inline auto nacs = format::maxsz(fxa());
 JUTIL_CI void build_help(auto &&pfs_, auto &&pss_, auto &&name_, auto &&what_, auto &&long_,
                          auto &&f, auto &&g)
-{
-    f("\033[1mNAME\033[0m\n    ", name_, " - ", what_, "\n\n\033[1mSYNOPSIS\033[0m\n    ", name_);
-    each(pfs_, [&](const auto &pf, auto) {
-        f(" [");
-        each(pf.ss, [&](const auto &s, auto l) { f("\033[1m-", s, "\033[0m", (l ? "]" : "|")); });
+{ // Builds a man-page style listing - TODO: simplified terse style
+    f(fxb("NAME\n\t"), name_, " - ", what_, fxb("\n\nSYNOPSIS\n\t"), name_);
+    jutil::each(pfs_, [&](auto &&pf) {
+        f(" ["), jutil::each(pf.ss, L2((f(fxb("-", x), (y ? "]" : "|"))), &));
     });
-    each(pss_, [&](const auto &ps, auto) {
-        f(" [");
-        each(ps.ss,
-             [&](const auto &s, auto l) { f("\033[1m-", s, "\033[0m", (l ? " arg]" : "|")); });
+    jutil::each(pss_, [&](auto &&ps) {
+        f(" ["), jutil::each(ps.ss, L2((f(fxb("-", x)), y ? f(fxa(" arg"), "]") : f('|')), &));
     });
-    if (!long_.empty())
-        f("\n\n\033[1mDESCRIPTION\033[0m\n    ", long_);
-    f("\n\n\033[1mOPTIONS\n    --help\033[0m, \033[1m-h\033[0m               Print "
-      "usage information and exit.\n");
-    each(pfs_, [&](const auto &pf, auto) {
-        f("    \033[1m");
-        const auto n0 = g();
-        each(pf.ss, [&](const auto &s, auto l) { f("-", s, (l ? "" : ", ")); });
-        auto n = g() - n0;
-        f("\033[0m");
-        if (n > 25)
-            f('\n'), n = 0;
-        for (; n < 25; ++n)
-            f(' ');
-        f(pf.h, '\n');
-    });
-    each(pss_, [&](const auto &ps, auto) {
-        f("    ");
-        auto n0 = g();
-        each(ps.ss, [&](const auto &s, auto l) {
-            n0 += 8, f("\033[1m-", s, "\033[0m arg", (l ? "" : ", "));
+    if (!long_.empty()) f(fxb("\n\nDESCRIPTION\n\t"), long_);
+    f(fxb("\n\nOPTIONS\n\t--help"), ", ", fxb("-h"),
+      "               Print usage information and exit.");
+    const auto opts = [&](auto &&ps, auto &&usage) {
+        jutil::each(ps, [&](auto &&pf) {
+            f("\n\t");
+            auto n0 = g();
+            jutil::each(pf.ss, [&](auto &&s, auto, auto l) { n0 += usage(s, l); });
+            auto n = g() - n0;
+            if (n > 25) f("\n\t"), n = 0;
+            for (; n < 25; ++n)
+                f(' ');
+            f(pf.h);
         });
-        auto n = g() - n0;
-        if (n > 25)
-            f('\n'), n = 0;
-        for (; n < 25; ++n)
-            f(' ');
-        f(ps.h, '\n');
-    });
+    };
+    opts(pfs_, L2((f(fxb("-", x), (y ? "" : ", ")), nacs), &));
+    opts(pss_, L2((f(fxb("-", x), fxa(" arg"), (y ? "" : ", ")), nacs + nbcs), &));
 }
 
 //
@@ -357,3 +348,5 @@ JUTIL_CI int visit(int argc, char *argv[], opt_visitor auto &&ov, arg_visitor au
 }
 
 } // namespace options
+
+#include "lmacro_end.h"
