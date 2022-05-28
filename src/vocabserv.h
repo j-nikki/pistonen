@@ -26,6 +26,11 @@ struct log {
         fwrite(buf.data(), sizeof(char), len, file);
     }
     template <class... Args>
+    JUTIL_INLINE void debug(Args &&...args)
+    {
+        return print(static_cast<Args &&>(args)...);
+    }
+    template <class... Args>
     JUTIL_INLINE void error(Args &&...args)
     {
         return print(static_cast<Args &&>(args)...);
@@ -42,8 +47,7 @@ struct log {
     }
     ~log()
     {
-        if (file != stdout)
-            fclose(file);
+        if (file != stdout) fclose(file);
     }
     buffer buf;
     std::mutex mtx;

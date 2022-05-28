@@ -12,8 +12,7 @@ char *format_impl::itoa(const uint32_t x, char *d_f) noexcept
 #define PRINT_1(Digit) *d_f++ = static_cast<char>((Digit) + '0')
 #define PRINT_2(TwoDigits)                                                                         \
     do {                                                                                           \
-        memcpy(d_f, radix_100_table + (TwoDigits)*2, 2);                                           \
-        d_f += 2;                                                                                  \
+        d_f = std::copy_n(radix_100_table + (TwoDigits)*2, 2, d_f);                                \
     } while (0)
 #define PRINT(MagicNumber, ExtraShift, RemainingCount)                                             \
     do {                                                                                           \

@@ -8,7 +8,7 @@ ReflowComments: true
 AlwaysBreakTemplateDeclarations: Yes
 CommentPragmas: '^! .*'
 BinPackParameters: true
-IfMacros: ['FOR_CO_AWAIT']
+IfMacros: ['FOR_CO_AWAIT', 'JUTIL_IF_CONSTEVAL']
 AlignConsecutiveMacros: AcrossEmptyLinesAndComments
 AllowShortCaseLabelsOnASingleLine: true
 BreakBeforeBraces: Custom

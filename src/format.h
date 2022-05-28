@@ -91,17 +91,26 @@ constexpr inline detail::cs<'1', '5'> bright_white;
 } // namespace fx
 
 //
+// hex
+//
+
+struct hex_ty {
+    uint64_t x; // TODO: support more widths
+};
+JUTIL_CI hex_ty hex(const uint64_t x) noexcept { return {x}; }
+
+//
 // fmt_width
 //
 
-template <std::size_t N, std::integral T>
+template <std::size_t N, class T>
 struct fmt_width_ty {
     T x;
 };
-template <std::size_t N, class T>
-JUTIL_CI fmt_width_ty<N, T> fmt_width(T &&x) noexcept
+template <std::size_t N, std::integral T>
+JUTIL_CI fmt_width_ty<N, T> fmt_width(const T x) noexcept
 {
-    return {static_cast<T &&>(x)};
+    return {x};
 }
 
 #define FMT_STR(Idx) reinterpret_cast<const char(*)[3]>(&detail::strs[(Idx)*3])
@@ -110,7 +119,7 @@ JUTIL_CI fmt_width_ty<N, T> fmt_width(T &&x) noexcept
         fmt_width<2>(H), ":", fmt_width<2>(M), ":", fmt_width<2>(S), " GMT"
 
 //
-// formatter
+// custom_formatable
 //
 
 template <class T>
@@ -128,6 +137,143 @@ concept lazyarg = requires(const T &x, char *p) {
     { x.write(p) } noexcept -> std::same_as<char *>;
 };
 // clang-format on
+
+//
+// maxsz
+//
+
+namespace detail
+{
+struct maxsz_impl {
+    static JUTIL_CI std::size_t maxsz() noexcept { return 0; }
+
+    //
+    // string maxsz
+    //
+
+    template <std::size_t N, class... Rest>
+    static JUTIL_CI std::size_t maxsz(const char (&)[N], Rest &&...rest) noexcept
+    {
+        return N - 1 + maxsz_impl::maxsz(static_cast<Rest &&>(rest)...);
+    }
+
+    template <std::size_t N, class... Rest>
+    static JUTIL_CI std::size_t maxsz(const char (*)[N], Rest &&...rest) noexcept
+    {
+        return N + maxsz_impl::maxsz(static_cast<Rest &&>(rest)...);
+    }
+
+    template <class... Rest>
+    static JUTIL_CI std::size_t maxsz(std::string_view sv, Rest &&...rest) noexcept
+    {
+        return sv.size() + maxsz_impl::maxsz(static_cast<Rest &&>(rest)...);
+    }
+
+    //
+    // char maxsz
+    //
+
+    template <class... Rest>
+    static JUTIL_CI std::size_t maxsz(char, Rest &&...rest) noexcept
+    {
+        return 1 + maxsz_impl::maxsz(static_cast<Rest &&>(rest)...);
+    }
+
+    //
+    // bool maxsz
+    //
+
+    // template <class... Rest>
+    // static JUTIL_CI std::size_t maxsz(bool, Rest &&...rest) noexcept
+    // {
+    //     return 5 + maxsz_impl::maxsz(static_cast<Rest &&>(rest)...);
+    // }
+
+    //
+    // hex maxsz
+    //
+
+    template <class... Rest>
+    static JUTIL_CI std::size_t maxsz(const hex_ty &, Rest &&...rest) noexcept
+    {
+        return 16 + maxsz_impl::maxsz(static_cast<Rest &&>(rest)...);
+    }
+
+    //
+    // integer maxsz
+    //
+
+    template <std::integral T, class... Rest>
+    static JUTIL_CI std::size_t maxsz(T, Rest &&...rest) noexcept
+    {
+        return 10 + std::is_signed_v<T> + maxsz_impl::maxsz(static_cast<Rest &&>(rest)...);
+    }
+
+    template <std::size_t N, class T, class... Rest>
+    static JUTIL_CI std::size_t maxsz(fmt_width_ty<N, T>, Rest &&...rest) noexcept
+    {
+        return N + maxsz_impl::maxsz(static_cast<Rest &&>(rest)...);
+    }
+
+    //
+    // fx maxsz
+    //
+
+    template <jutil::instance_of<fx_ty> T, class... Rest>
+    static JUTIL_CI std::size_t maxsz(T &&fx, Rest &&...rest) noexcept
+    {
+        return std::remove_cvref_t<T>::ncs + maxsz_impl::maxsz(fx.x, static_cast<Rest &&>(rest)...);
+    }
+
+    //
+    // timestamp maxsz
+    //
+
+    template <class... Rest>
+    static JUTIL_CI std::size_t maxsz(hdr_time, Rest &&...rest) noexcept
+    {
+        return maxsz_impl::maxsz(FMT_TIMESTAMP(0, 0, 0, 0, 0, 0, 0), static_cast<Rest &&>(rest)...);
+    }
+
+    //
+    // tuple maxsz
+    //
+
+    template <jutil::instance_of<std::tuple> T, class... Rest>
+    static JUTIL_CI std::size_t maxsz(T &&xs_, Rest &&...rest_) noexcept
+    {
+        return []<std::size_t... Is>(T && xs, std::index_sequence<Is...>, Rest && ...rest)
+        {
+            return maxsz_impl::maxsz(std::get<Is>(static_cast<T &&>(xs))...,
+                                     static_cast<Rest &&>(rest)...);
+        }
+        (static_cast<T &&>(xs_),
+         std::make_index_sequence<std::tuple_size_v<std::remove_cvref_t<T>>>{},
+         static_cast<Rest &&>(rest_)...);
+    }
+
+    //
+    // user-provided maxsz
+    //
+
+    template <custom_formatable T, class... Rest>
+    static JUTIL_CI std::size_t maxsz(const T &x, Rest &&...rest) noexcept
+    {
+        return format::formatter<std::remove_cvref_t<T>>::maxsz(x) +
+               maxsz_impl::maxsz(static_cast<Rest &&>(rest)...);
+    }
+};
+} // namespace detail
+
+template <class... Ts>
+[[nodiscard]] JUTIL_CI std::size_t maxsz(Ts &&...xs) noexcept
+{
+    return detail::maxsz_impl::maxsz(static_cast<Ts &&>(xs)...);
+}
+
+//
+// formatter
+//
 
 template <lazyarg T>
 struct formatter<T> {
@@ -200,6 +346,30 @@ struct format_impl {
     }
 
     //
+    // hex formatting
+    //
+
+    template <class... Rest>
+    static JUTIL_CI char *format(char *d_f, const hex_ty x_, Rest &&...rest) noexcept
+    {
+        JUTIL_IF_CONSTEVAL {
+            static constexpr char radix[]{'0', '1', '2', '3', '4', '5', '6', '7',
+                                          '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'};
+            for (const auto x : std::bit_cast<std::array<uint8_t, 8>>(x_.x))
+                *d_f++ = radix[x >> 4], *d_f++ = radix[x % 16];
+        } else {
+            auto xs = _mm_shuffle_epi8(
+                _mm_set_epi64x((x_.x >> 4) & 0x0f0f0f0f0f0f0f0f, x_.x & 0x0f0f0f0f0f0f0f0f),
+                _mm_set_epi64x(0x0708'0609'050a'040b, 0x030c'020d'010e'000f));
+            const auto radix = _mm_setr_epi8('0', '1', '2', '3', '4', '5', '6', '7', //
+                                             '8', '9', 'a', 'b', 'c', 'd', 'e', 'f');
+            xs               = _mm_shuffle_epi8(radix, xs);
+            _mm_storeu_si128(static_cast<__m128i *>(static_cast<void *>(d_f)), xs);
+        }
+        return format_impl::format(d_f + 16, static_cast<Rest &&>(rest)...);
+    }
+
+    //
     // integer formatting
     //
 
@@ -207,16 +377,21 @@ struct format_impl {
     static char *itoa(const uint32_t x, char *d_f) noexcept;
 
     template <std::integral T, class... Rest>
-    static JUTIL_INLINE char *format(char *d_f, T x, Rest &&...rest) noexcept
+    static JUTIL_CI char *format(char *d_f, T x, Rest &&...rest) noexcept
     {
-        if constexpr (std::is_signed_v<T>) {
-            if (x < 0) {
-                x      = -x;
-                *d_f++ = '-';
-            }
+        if constexpr (std::is_signed_v<T>)
+            if (x < 0) x = -x, *d_f++ = '-';
+
+        JUTIL_IF_CONSTEVAL {
+            char buf[maxsz_impl::maxsz(T{})], *it = buf;
+            do {
+                *it++ = '0' + (x % 10);
+            } while ((x /= 10));
+            return format_impl::format(std::copy(buf, it, d_f), static_cast<Rest &&>(rest)...);
+        } else {
+            return format_impl::format(format_impl::itoa(static_cast<uint32_t>(x), d_f),
+                                       static_cast<Rest &&>(rest)...);
         }
-        return format_impl::format(format_impl::itoa(static_cast<uint32_t>(x), d_f),
-                                   static_cast<Rest &&>(rest)...);
     }
 
     template <std::size_t N, class T, class... Rest>
@@ -294,129 +469,6 @@ template <class... Ts>
 JUTIL_CI char *format(char *const d_f, Ts &&...xs) noexcept
 {
     return detail::format_impl::format(d_f, static_cast<Ts &&>(xs)...);
-}
-
-//
-// format_maxsz
-//
-
-namespace detail
-{
-struct maxsz_impl {
-    static JUTIL_CI std::size_t maxsz() noexcept { return 0; }
-
-    //
-    // string maxsz
-    //
-
-    template <std::size_t N, class... Rest>
-    static JUTIL_CI std::size_t maxsz(const char (&)[N], Rest &&...rest) noexcept
-    {
-        return N - 1 + maxsz_impl::maxsz(static_cast<Rest &&>(rest)...);
-    }
-
-    template <std::size_t N, class... Rest>
-    static JUTIL_CI std::size_t maxsz(const char (*)[N], Rest &&...rest) noexcept
-    {
-        return N + maxsz_impl::maxsz(static_cast<Rest &&>(rest)...);
-    }
-
-    template <class... Rest>
-    static JUTIL_CI std::size_t maxsz(std::string_view sv, Rest &&...rest) noexcept
-    {
-        return sv.size() + maxsz_impl::maxsz(static_cast<Rest &&>(rest)...);
-    }
-
-    //
-    // char maxsz
-    //
-
-    template <class... Rest>
-    static JUTIL_CI std::size_t maxsz(char, Rest &&...rest) noexcept
-    {
-        return 1 + maxsz_impl::maxsz(static_cast<Rest &&>(rest)...);
-    }
-
-    //
-    // bool maxsz
-    //
-
-    // template <class... Rest>
-    // static JUTIL_CI std::size_t maxsz(bool, Rest &&...rest) noexcept
-    // {
-    //     return 5 + maxsz_impl::maxsz(static_cast<Rest &&>(rest)...);
-    // }
-
-    //
-    // integer maxsz
-    //
-
-    template <std::integral T, class... Rest>
-    static JUTIL_CI std::size_t maxsz(T, Rest &&...rest) noexcept
-    {
-        return 10 + std::is_signed_v<T> + maxsz_impl::maxsz(static_cast<Rest &&>(rest)...);
-    }
-
-    template <std::size_t N, class T, class... Rest>
-    static JUTIL_CI std::size_t maxsz(fmt_width_ty<N, T>, Rest &&...rest) noexcept
-    {
-        return N + maxsz_impl::maxsz(static_cast<Rest &&>(rest)...);
-    }
-
-    //
-    // fx maxsz
-    //
-
-    template <jutil::instance_of<fx_ty> T, class... Rest>
-    static JUTIL_CI std::size_t maxsz(T &&fx, Rest &&...rest) noexcept
-    {
-        return std::remove_cvref_t<T>::ncs + maxsz_impl::maxsz(fx.x, static_cast<Rest &&>(rest)...);
-    }
-
-    //
-    // timestamp maxsz
-    //
-
-    template <class... Rest>
-    static JUTIL_CI std::size_t maxsz(hdr_time, Rest &&...rest) noexcept
-    {
-        return maxsz_impl::maxsz(FMT_TIMESTAMP(0, 0, 0, 0, 0, 0, 0), static_cast<Rest &&>(rest)...);
-    }
-
-    //
-    // tuple maxsz
-    //
-
-    template <jutil::instance_of<std::tuple> T, class... Rest>
-    static JUTIL_CI std::size_t maxsz(T &&xs_, Rest &&...rest_) noexcept
-    {
-        return []<std::size_t... Is>(T && xs, std::index_sequence<Is...>, Rest && ...rest)
-        {
-            return maxsz_impl::maxsz(std::get<Is>(static_cast<T &&>(xs))...,
-                                     static_cast<Rest &&>(rest)...);
-        }
-        (static_cast<T &&>(xs_),
-         std::make_index_sequence<std::tuple_size_v<std::remove_cvref_t<T>>>{},
-         static_cast<Rest &&>(rest_)...);
-    }
-
-    //
-    // user-provided maxsz
-    //
-
-    template <custom_formatable T, class... Rest>
-    static JUTIL_CI std::size_t maxsz(const T &x, Rest &&...rest) noexcept
-    {
-        return format::formatter<std::remove_cvref_t<T>>::maxsz(x) +
-               maxsz_impl::maxsz(static_cast<Rest &&>(rest)...);
-    }
-};
-} // namespace detail
-
-template <class... Ts>
-[[nodiscard]] JUTIL_CI std::size_t maxsz(Ts &&...xs) noexcept
-{
-    return detail::maxsz_impl::maxsz(static_cast<Ts &&>(xs)...);
 }
 
 // clang-format off

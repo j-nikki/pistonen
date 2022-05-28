@@ -199,46 +199,78 @@ void print_vec_u8(const auto &v_, const char *name)
 // base64
 //
 
-struct b64_cidx_result {
-    uint32_t hi, lo;
-};
-__m128i b64_cidx(const __m128i cs) noexcept
+namespace detail
 {
-#define b_c_vec(a, b, c, d, e, f, g)                                                               \
-    _mm_setr_epi8(                                                                                 \
-        static_cast<char>(a + 128), static_cast<char>(b + 128), static_cast<char>(c + 128),        \
-        static_cast<char>(d + 128), static_cast<char>(e + 128), static_cast<char>(f + 128),        \
-        static_cast<char>(g + 128), 0, static_cast<char>(a + 128), static_cast<char>(b + 128),     \
-        static_cast<char>(c + 128), static_cast<char>(d + 128), static_cast<char>(e + 128),        \
-        static_cast<char>(f + 128), static_cast<char>(g + 128), 0)
-    const auto sub   = _mm_sub_epi8(cs, b_c_vec('A', 'a', '0', '+', '/', '-', '_'));
-    const auto lt    = _mm_cmplt_epi8(sub, b_c_vec(26, 26, 10, 1, 1, 1, 1));
-    const auto blend = _mm_blendv_epi8(sub, b_c_vec(0, -26, -52, -62, -63, -62, -63), lt);
-    const auto sad   = _mm_sad_epu8(sub, blend);
-    return sad;
-#undef b_c_vec
+template <char A, char B, char C, char D, char E, char F, char G>
+const auto b64iset = _mm_set_epi8(static_cast<char>(A + 128), static_cast<char>(B + 128),
+                                  static_cast<char>(C + 128), static_cast<char>(D + 128),
+                                  static_cast<char>(E + 128), static_cast<char>(F + 128),
+                                  static_cast<char>(G + 128), static_cast<char>(A + 128),
+                                  static_cast<char>(B + 128), static_cast<char>(C + 128),
+                                  static_cast<char>(D + 128), static_cast<char>(E + 128),
+                                  static_cast<char>(F + 128), static_cast<char>(G + 128), 0, 0);
+
+template <bool Rs2>
+JUTIL_INLINE decltype(auto) b64_idx_set(const auto &s) noexcept
+{
+    if constexpr (Rs2)
+        return _mm_bsrli_si128(s, 2);
+    else
+        return s;
 }
+
+template <bool Rs2>
+JUTIL_INLINE auto b64_cidx(const auto cs) noexcept
+{
+    auto &&ssub      = b64_idx_set<Rs2>(b64iset<'A', 'a', '0', '+', '/', '-', '_'>);
+    auto &&slt       = b64_idx_set<Rs2>(b64iset<26, 26, 10, 1, 1, 1, 1>);
+    auto &&sblend    = b64_idx_set<Rs2>(b64iset<0, -26, -52, -62, -63, -62, -63>);
+    const auto xs    = _mm_sub_epi8(cs, ssub);
+    const auto lt    = _mm_cmplt_epi8(xs, slt);
+    const auto blend = _mm_blendv_epi8(xs, sblend, lt);
+    return _mm_sub_epi8(xs, blend);
+}
+
+char *b64_decode_impl(const std::size_t n, const char *it, char *dit) noexcept
+{
+    CHECK(std::bit_cast<uintptr_t>(&*it) % 4, == 0);
+    for (const auto l = it + n; it != l; it += 4, dit += 3) {
+        auto xs = std::bit_cast<__m128i>(
+            _mm_broadcast_ss(static_cast<const float *>(static_cast<const void *>(it))));
+        xs = _mm_or_si128(b64_cidx<false>(xs), b64_cidx<true>(xs));
+        xs = _mm_maddubs_epi16(xs, _mm_set1_epi16(0x0140));
+        xs = _mm_hadd_epi32(xs, xs);
+        xs = _mm_hadd_epi32(xs, xs);
+        xs = _mm_mullo_epi16(xs, _mm_set1_epi32(0x0010'0001));
+        xs = _mm_srli_epi64(xs, 20);
+        xs = _mm_shuffle_epi8(xs, _mm_set1_epi32(0x000102));
+        _mm_storeu_si32(&*dit, xs);
+    }
+    return dit;
+}
+} // namespace detail
 
 template <class I, class O>
 struct b64_decode_result {
     [[no_unique_address]] sr::iterator_t<I> in;
     [[no_unique_address]] sr::iterator_t<O> out;
 };
-template <jutil::sized_input_range I, jutil::sized_output_range<sr::range_value_t<I>> O>
-b64_decode_result<I, O> b64_decode(I &&i, O &&o) noexcept
+template <jutil::sized_contiguous_range I, jutil::sized_contiguous_range O>
+JUTIL_INLINE b64_decode_result<I, O> b64_decode(I &&i, O &&o) noexcept
 {
-    auto it  = sr::begin(i);
-    auto dit = sr::begin(o);
-    for (auto n = std::min(sr::size(i) * 4, sr::size(o) * 3 - 3) / 16; n--; it += 4, dit += 3) {
-        const auto cs  = _mm_loadu_si64(it);
-        const auto i10 = b64_cidx(_mm_shuffle_epi8(cs, _mm_set_epi64x(0x101010101010101, 0)));
-        const auto i32 =
-            b64_cidx(_mm_shuffle_epi8(cs, _mm_set_epi64x(0x303030303030303, 0x202020202020202)));
-        const auto or_ = _mm_or_si128(i32, _mm_slli_epi64(i10, 12));
-        const auto y   = (_mm_extract_epi32(or_, 2) << 8) | (_mm_extract_epi32(or_, 0) << 14);
-        jutil::storeu(dit, _bswap(y));
-    }
-    return {it, dit};
+    const auto n   = std::min(sr::size(i) * 4, sr::size(o) * 3 - 3) / 16;
+    const auto it  = sr::begin(i);
+    const auto dit = sr::begin(o);
+    return {it + n, sr::iterator_t<O>{::detail::b64_decode_impl(n, &*it, &*dit)}};
+}
+
+void asd()
+{
+    alignas(4) const char src[] = "YWJjZGVmZw==";
+    std::array<char, 128> res;
+    sr::copy(std::string_view{"abcdefg"}, res.begin());
+    auto [in, out] = b64_decode(src, res);
+    printf("%.*s\n", static_cast<int>(out - res.data()), res.data());
 }
 
 //
@@ -284,10 +316,8 @@ bool check_auth(const std::string_view sv) noexcept
 //! @param rs Response message for given request
 void serve(const message &rq, buffer &rs, buffer &body)
 {
-    if (rq.strt.mtd == method::err)
-        goto badreq;
-    if (rq.strt.ver == version::err)
-        goto badver;
+    if (rq.strt.mtd == method::err) goto badreq;
+    if (rq.strt.ver == version::err) goto badver;
 
     if (const auto auth = rq.hdrs.get("Authorization", ""); !check_auth(auth)) {
         rs.put("HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic\r\n\r\n");
@@ -296,8 +326,7 @@ void serve(const message &rq, buffer &rs, buffer &body)
     }
 
 #ifndef NDEBUG
-    if (rq.strt.tgt.sv() == "/kill")
-        exit(0);
+    if (rq.strt.tgt.sv() == "/kill") exit(0);
 #endif
 
     g_log.print("serving request: ", std::to_underlying(rq.strt.mtd), " ", rq.strt.tgt);
@@ -340,6 +369,7 @@ pnen::task handle_connection(pnen::socket s)
 {
     DBGEXPR(const int id_ = ncon++);
     DBGEXPR(printf("con#%d: accepted\n", id_));
+    DBGEXPR(DEFER[=] { printf("con#%d: write end\n", id_); });
 
     // Read into buffer
     static constexpr size_t nbuf = 8 * 1024 * 1024;
@@ -374,6 +404,4 @@ pnen::task handle_connection(pnen::socket s)
     // Write response
     FOR_CO_AWAIT (s.write(rs.data(), rs.size()))
         ;
-
-    DBGEXPR(printf("con#%d: write end\n", id_));
 }

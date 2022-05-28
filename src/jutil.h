@@ -26,9 +26,11 @@
 namespace jutil
 {
 #ifdef __cpp_if_consteval
-#define JUTIL_CONSTEVAL consteval
+// clang-format off
+#define JUTIL_IF_CONSTEVAL if consteval
+// clang-format on
 #else
-#define JUTIL_CONSTEVAL (std::is_constant_evaluated())
+#define JUTIL_IF_CONSTEVAL if (std::is_constant_evaluated())
 #endif
 #ifdef __cpp_lib_hardware_interference_size
 using std::hardware_constructive_interference_size;
@@ -63,20 +65,20 @@ concept instance_of = requires(std::remove_cvref_t<T> &x)
     []<class... Ts>(Tmpl<Ts...> &) {}(x);
 };
 
-template <class To, class From>
+template <class From, class To>
 concept static_castable = requires(From &&x)
 {
     static_cast<To>(static_cast<From &&>(x));
 };
-template <class To, class From>
+template <class From, class To>
 concept bit_castable = sizeof(To) == sizeof(From) and
                        std::is_trivially_copyable_v<To> and std::is_trivially_copyable_v<From>;
-template <class To, class From>
-concept opaque_castable = static_castable<To, From> || bit_castable<To, From>;
+template <class From, class To>
+concept opaque_castable = static_castable<From, To> || bit_castable<From, To>;
 template <class To, class From>
 constexpr To opaque_cast(From &&x) noexcept
 {
-    if constexpr (static_castable<To, From>)
+    if constexpr (static_castable<From, To>)
         return static_cast<To>(static_cast<From &&>(x));
     else
         return std::bit_cast<To>(static_cast<From &&>(x));
@@ -84,7 +86,7 @@ constexpr To opaque_cast(From &&x) noexcept
 template <class To, opaque_castable<To> From>
 constexpr To opaque_cast(From &x) noexcept
 {
-    if constexpr (static_castable<To, From>)
+    if constexpr (static_castable<From, To>)
         return static_cast<To>(x);
     else
         return std::bit_cast<To>(x);
@@ -306,6 +308,8 @@ template <class T>
 concept borrowed_input_range = sr::borrowed_range<T> && sr::input_range<T>;
 template <class T>
 concept sized_input_range = sr::input_range<T> &&(requires(T r) { sr::size(r); });
+template <class T>
+concept sized_contiguous_range = sr::contiguous_range<T> &&(requires(T r) { sr::size(r); });
 template <class R, class T>
 concept sized_output_range = sr::output_range<R, T> &&(requires(R r) { sr::size(r); });
 
@@ -421,7 +425,7 @@ template <std::size_t N, std::size_t Pad = 0, bool InitPad = true, sr::input_ran
     -> std::array<std::decay_t<decltype(f(0_uz, *sr::begin(r)))>, N + Pad>
 {
     using OEl = std::decay_t<decltype(f(0_uz, *sr::begin(r)))>;
-    if JUTIL_CONSTEVAL {
+    JUTIL_IF_CONSTEVAL {
         std::array<OEl, N + Pad> res{};
         auto i = 0_uz;
         for (sr::range_reference_t<R> x : static_cast<R &&>(r))
@@ -445,7 +449,7 @@ map_n(R &&r,
     -> std::array<std::decay_t<decltype(f(*sr::begin(r)))>, N + Pad>
 {
     using OEl = std::decay_t<decltype(f(*sr::begin(r)))>;
-    if JUTIL_CONSTEVAL {
+    JUTIL_IF_CONSTEVAL {
         std::array<OEl, N + Pad> res{};
         auto i = 0_uz;
         for (sr::range_reference_t<R> x : static_cast<R &&>(r))
@@ -576,7 +580,7 @@ template <class T>
 requires bit_castable<T, std::array<char, sizeof(T)>>
 [[nodiscard]] constexpr T loadu(const char *p) noexcept
 {
-    if JUTIL_CONSTEVAL {
+    JUTIL_IF_CONSTEVAL {
         alignas(T) std::array<char, sizeof(T)> buf{};
         std::copy_n(p, sizeof(T), buf.begin());
         return std::bit_cast<T>(buf);
