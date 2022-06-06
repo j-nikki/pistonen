@@ -14,14 +14,13 @@
 #include <boost/preprocessor/variadic/to_seq.hpp>
 #include <concepts>
 #include <limits.h>
+#include <limits>
 #include <memory>
 #include <ranges>
 #include <span>
 #include <type_traits>
 #include <utility>
 #include <x86intrin.h>
-
-#include "lmacro_begin.h"
 
 namespace jutil
 {
@@ -202,7 +201,7 @@ concept callable = requires(T f) {
 };
 template <class T, class R, class... Args>
 concept callable_r = requires(T f) {
-    { f(std::declval<Args>()...) } -> std::convertible_to<R>;
+    { f(std::declval<Args>()...) } -> std::same_as<R>;
 };
 // clang-format on
 template <class T, class... Args>
@@ -472,9 +471,6 @@ map(R &&r, auto f) noexcept(noexcept(map_n<csr_sz<R>(), Pad, InitPad>(static_cas
 {
     return map_n<csr_sz<R>(), Pad, InitPad>(static_cast<R &&>(r), f);
 }
-
-static_assert(std::is_same_v<decltype(map(std::array{0}, L(x + 1.))), std::array<double, 1>>);
-static_assert(std::is_same_v<decltype(map<1>(std::array{0}, L(x + 1))), std::array<int, 2>>);
 
 template <sr::range R, class InitT = sr::range_value_t<R>>
 [[nodiscard]] constexpr InitT sum(R &&r, InitT init = {}) noexcept
@@ -978,7 +974,6 @@ struct getter {
 };
 constexpr inline getter<0> fst{};
 constexpr inline getter<1> snd{};
-constexpr inline auto abs_ = L(x < 0 ? -x : x);
 
 //
 // each
@@ -1088,5 +1083,3 @@ constexpr inline auto iota = []<auto... xs>(std::integer_sequence<decltype(A + B
     S(S &&)      = delete;
 
 } // namespace jutil
-
-#include "lmacro_end.h"

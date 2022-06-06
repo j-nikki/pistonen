@@ -1,5 +1,5 @@
 import os
-from subprocess import check_call
+from subprocess import call
 
 
 def read_or(path, def_=''):
@@ -23,9 +23,12 @@ ts = ' '.join(str(os.stat(x).st_mtime_ns)
               for x in cmakeFiles if os.path.exists(x))
 
 if not os.path.exists('build/CMakeCache.txt') or read_or('.ts') != ts:
-    check_call(['cmake', '-Wno-dev', '-S', '.', '-B', 'build',
+    ret = call(['cmake', '-Wno-dev', '-S', '.', '-B', 'build',
                '--preset', read_or(".cpreset", "debug").splitlines()[0]])
+    if ret != 0:
+        exit(ret)
     with open('.ts', 'w') as f:
         f.write(ts)
+    exit(1)
 
-check_call(['cmake', '--build', '--preset', read_or(".bpreset", "test")])
+exit(call(['cmake', '--build', '--preset', read_or(".bpreset", "test")]))

@@ -13,7 +13,7 @@
 #include <memory>
 #include <netinet/in.h>
 #include <numeric>
-#include <openssl/err.h>
+#include <openssl/crypto.h>
 #include <openssl/ssl.h>
 #include <ranges>
 #include <source_location>
@@ -23,6 +23,7 @@
 #include <sys/socket.h>
 #include <sys/timerfd.h>
 #include <sys/types.h>
+#include <tls.h>
 #include <unistd.h>
 
 #include "../jutil.h"
@@ -39,20 +40,13 @@ using namespace jutil;
 
 #define PNEN_wno_unused_value _Pragma("GCC diagnostic ignored \"-Wunused-value\"")
 
-//[[noreturn]] void error(const char *msg)
-//{
-//    perror(msg);
-//    exit(EXIT_FAILURE);
-//}
-
 #if !defined(NDEBUG) && !defined(__INTELLISENSE__)
 #define PNEN_assume(E) CHECK(E)
 #define PNEN_dbg(T, F) T
 #else
 #define PNEN_assume(E)                                                                             \
     do {                                                                                           \
-        if (!(E))                                                                                  \
-            __builtin_unreachable();                                                               \
+        if (!(E)) __builtin_unreachable();                                                         \
     } while (0)
 #define PNEN_dbg(T, F) F
 #endif
@@ -123,25 +117,25 @@ JUTIL_CI auto first_state(has_first_state auto &&x) noexcept(noexcept(x.first_st
     (x, __VA_ARGS__)
 
 struct read_state {
-    SSL *ssl;
+    tls *tc;
     char *buf;
     char *bufspn;
     size_t nbufspn;
 };
 
 struct write_state {
-    SSL *ssl;
-    const void *buf;
+    tls *tc;
+    const char *buf;
     size_t nbuf;
 };
 
-void log_ssl_error(SSL *ssl, const char *fname, int err,
+void log_ssl_error(tls *tc, const char *fname, int err,
                    std::source_location sl = std::source_location::current());
 
 struct task {
     JUTIL_PUSH_DIAG(JUTIL_WNO_SUBOBJ_LINKAGE)
     struct promise_type {
-        SSL *ssl;
+        tls *tc;
         int sfd, tfd;
         promise_type()                                = default;
         promise_type(const promise_type &)            = delete;
@@ -150,11 +144,10 @@ struct task {
         promise_type &operator=(promise_type &&)      = delete;
         ~promise_type()
         {
-            if (const auto ssres = SSL_shutdown(ssl); ssres < 0)
-                log_ssl_error(ssl, "SSL_shutdown", SSL_get_error(ssl, ssres));
+            CHECK(tls_close(tc), != -1);
             CHECK(close(sfd), != -1);
             CHECK(close(tfd), != -1);
-            SSL_free(ssl);
+            tls_free(tc);
         }
         constexpr JUTIL_INLINE task get_return_object() & { return {*this}; }
         constexpr JUTIL_INLINE std::suspend_always initial_suspend() { return {}; }
@@ -167,7 +160,7 @@ struct task {
 };
 
 struct socket {
-    SSL *ssl;
+    tls *tc;
 
     //
     // read
@@ -180,16 +173,17 @@ struct socket {
         JUTIL_INLINE void await_suspend(std::coroutine_handle<>) noexcept {}
         JUTIL_INLINE loop_state await_resume() noexcept
         {
-            if (const auto srres = SSL_read(rs.ssl, rs.bufspn, rs.nbufspn); srres > 0) {
-                rs.bufspn += srres;
-                rs.nbufspn -= srres;
-            } else {
-                const auto err = SSL_get_error(rs.ssl, srres);
-                return err == SSL_ERROR_WANT_READ
-                           ? loop_state::suspend
-                           : (log_ssl_error(rs.ssl, "SSL_read", err), loop_state::error);
+            // TODO: investigate broken pipe: g_log.debug() every socket-related action
+            const auto ret = tls_read(rs.tc, rs.bufspn, rs.nbufspn);
+            if (ret == TLS_WANT_POLLIN || ret == TLS_WANT_POLLOUT) {
+                return loop_state::suspend;
+            } else if (ret == -1) {
+                return loop_state::error;
+            } else [[likely]] {
+                rs.bufspn += ret;
+                rs.nbufspn -= ret;
+                return loop_state::has_next;
             }
-            return loop_state::has_next;
         }
     };
     struct read_res : read_state {
@@ -207,7 +201,7 @@ struct socket {
     //! @return read_res_iter Await-iterable yielding amount of bytes read
     [[nodiscard]] JUTIL_INLINE read_res read(char *const buf, const size_t nbuf) const noexcept
     {
-        return {{.ssl = ssl, .buf = buf, .bufspn = buf, .nbufspn = nbuf}};
+        return {{.tc = tc, .buf = buf, .bufspn = buf, .nbufspn = nbuf}};
     }
 
     //
@@ -218,29 +212,20 @@ struct socket {
     template <bool F>
     struct write_state_awaitable {
         write_state &ws;
-        JUTIL_INLINE bool await_ready() noexcept
-        {
-            if constexpr (!F) {
-                return false;
-            } else if (const auto swres = SSL_write(ws.ssl, ws.buf, ws.nbuf); swres > 0) {
-                return true;
-            } else {
-                const auto err = SSL_get_error(ws.ssl, swres);
-                return err != SSL_ERROR_WANT_WRITE;
-            }
-        }
+        JUTIL_INLINE bool await_ready() noexcept { return false; }
         JUTIL_INLINE void await_suspend(std::coroutine_handle<>) noexcept {}
         JUTIL_INLINE loop_state await_resume() noexcept
         {
-            if constexpr (F) {
-                return loop_state::exhausted;
-            } else if (const auto swres = SSL_write(ws.ssl, ws.buf, ws.nbuf); swres > 0) {
-                return loop_state::exhausted;
-            } else {
-                const auto err = SSL_get_error(ws.ssl, swres);
-                return err == SSL_ERROR_WANT_WRITE
-                           ? loop_state::suspend
-                           : (log_ssl_error(ws.ssl, "SSL_write", err), loop_state::error);
+            // if constexpr (F) return loop_state::exhausted;
+            const auto ret = tls_write(ws.tc, ws.buf, ws.nbuf);
+            if (ret == TLS_WANT_POLLIN || ret == TLS_WANT_POLLOUT) {
+                return loop_state::suspend;
+            } else if (ret == -1) {
+                return loop_state::error;
+            } else [[likely]] {
+                ws.buf += ret;
+                ws.nbuf -= ret;
+                return (ws.nbuf > 0) ? loop_state::suspend : loop_state::exhausted;
             }
         }
     };
@@ -250,9 +235,9 @@ struct socket {
     };
 
   public:
-    JUTIL_INLINE write_res write(const void *const buf, size_t nbuf) const noexcept
+    JUTIL_INLINE write_res write(const char *const buf, size_t nbuf) const noexcept
     {
-        return {{.ssl = ssl, .buf = buf, .nbuf = nbuf}};
+        return {{.tc = tc, .buf = buf, .nbuf = nbuf}};
     }
     [[nodiscard]] JUTIL_INLINE write_res write(const std::string_view buf) const noexcept
     {
@@ -261,11 +246,11 @@ struct socket {
 };
 
 struct run_server_options {
-    uint16_t hostport        = 3000;
-    timespec timeout         = {.tv_sec = 5};
-    const char *ssl_cert     = nullptr;
-    const char *ssl_pkey     = nullptr;
-    std::string_view pk_pass = {};
+    uint16_t hostport    = 3000;
+    timespec timeout     = {.tv_sec = 5};
+    const char *ssl_cert = nullptr;
+    const char *ssl_pkey = nullptr;
+    const char *pk_pass  = {};
 };
 
 template <class F, class... Args>
@@ -287,24 +272,24 @@ JUTIL_INLINE void run_server(const run_server_options o, Task on_accept)
     CHECK(bind(acfd, reinterpret_cast<const sockaddr *>(&sin), sizeof(sin)), != -1);
     CHECK(listen(acfd, 5), != -1);
 
-    const auto ssl_mtd = TLS_server_method();
-    const auto ssl_ctx = CHECK(SSL_CTX_new(ssl_mtd));
-    DEFER[=] { SSL_CTX_free(ssl_ctx); };
-    CHECK(SSL_CTX_use_certificate_file(ssl_ctx, o.ssl_cert, SSL_FILETYPE_PEM), > 0);
-    SSL_CTX_set_default_passwd_cb(ssl_ctx, [](char *buf, int nbuf, int, void *pass_) {
-        const auto pass = static_cast<const std::string_view *>(pass_);
-        return static_cast<int>(pass->copy(buf, nbuf));
-    });
-    SSL_CTX_set_default_passwd_cb_userdata(
-        ssl_ctx, const_cast<void *>(static_cast<const void *>(&o.pk_pass)));
-    if (const auto supres = SSL_CTX_use_PrivateKey_file(ssl_ctx, o.ssl_pkey, SSL_FILETYPE_PEM);
-        supres != 1) {
-        log_ssl_error(nullptr, "SSL_CTX_use_PrivateKey_file", supres);
-        return;
-    }
+    const auto tcnf = tls_config_new();
+    if (!tcnf) return g_log.error("tls_config_new() failed");
+    DEFER[=] { tls_config_free(tcnf); };
+
+    tls_config_set_cert_file(tcnf, o.ssl_cert);
+    size_t nkey;
+    const auto keyf = tls_load_file(o.ssl_pkey, &nkey, const_cast<char *>(o.pk_pass));
+    if (!keyf) return g_log.error("tls_load_file() failed");
+    DEFER[=] { tls_unload_file(keyf, nkey); };
+    CHECK(tls_config_set_key_mem(tcnf, keyf, nkey), != -1);
+
+    const auto ts = tls_server();
+    if (!ts) return g_log.error("tls_server() failed");
+    DEFER[=] { tls_free(ts); };
+    CHECK(tls_configure(ts, tcnf), != -1);
 
     const auto epfd = CHECK(epoll_create1(0), != -1);
-    epoll_event e{.events = EPOLLIN}, es[16];
+    epoll_event e{.events = EPOLLIN | EPOLLOUT}, es[16];
     const itimerspec its{.it_value = o.timeout};
     CHECK(epoll_ctl(epfd, EPOLL_CTL_ADD, acfd, &e), != -1);
     for (;;) {
@@ -314,18 +299,12 @@ JUTIL_INLINE void run_server(const run_server_options o, Task on_accept)
                 socklen_t nsin = sizeof(sin);
                 const auto fd  = CHECK(
                      accept4(acfd, reinterpret_cast<sockaddr *>(&sin), &nsin, SOCK_NONBLOCK), != -1);
-                const auto ssl = SSL_new(ssl_ctx);
-                SSL_set_fd(ssl, fd);
-                if (const auto sares = SSL_accept(ssl); sares <= 0) {
-                    if (const auto err = SSL_get_error(ssl, sares); err != SSL_ERROR_WANT_READ) {
-                        SSL_free(ssl);
-                        log_ssl_error(ssl, "SSL_accept", err);
-                        continue;
-                    }
-                }
 
-                auto &p    = on_accept(socket{ssl}).p;
-                p.ssl      = ssl;
+                tls *tc;
+                CHECK(tls_accept_socket(ts, &tc, fd), != -1);
+
+                auto &p    = on_accept(socket{tc}).p;
+                p.tc       = tc;
                 p.sfd      = fd;
                 auto h     = crhdl::from_promise(p);
                 e.data.ptr = h.address();

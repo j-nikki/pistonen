@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <concepts>
+#include <emmintrin.h>
 #include <ranges>
 #include <string.h>
 
@@ -210,9 +211,9 @@ struct maxsz_impl {
     }
 
     template <std::size_t N, class T, class... Rest>
-    static JUTIL_CI std::size_t maxsz(fmt_width_ty<N, T>, Rest &&...rest) noexcept
+    static JUTIL_CI std::size_t maxsz(fmt_width_ty<N, T> x, Rest &&...rest) noexcept
     {
-        return N + maxsz_impl::maxsz(static_cast<Rest &&>(rest)...);
+        return (x.x < 0) + N + maxsz_impl::maxsz(static_cast<Rest &&>(rest)...);
     }
 
     //
@@ -287,6 +288,8 @@ struct formatter<T> {
 
 namespace detail
 {
+extern const __m128i radix;
+extern const __m128i pi8los;
 struct format_impl {
     static JUTIL_CI char *format(char *const d_f) noexcept { return d_f; }
 
@@ -353,17 +356,15 @@ struct format_impl {
     static JUTIL_CI char *format(char *d_f, const hex_ty x_, Rest &&...rest) noexcept
     {
         JUTIL_IF_CONSTEVAL {
-            static constexpr char radix[]{'0', '1', '2', '3', '4', '5', '6', '7',
-                                          '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'};
+            static constexpr char radix_[]{'0', '1', '2', '3', '4', '5', '6', '7',
+                                           '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'};
             for (const auto x : std::bit_cast<std::array<uint8_t, 8>>(x_.x))
-                *d_f++ = radix[x >> 4], *d_f++ = radix[x % 16];
+                *d_f++ = radix_[x >> 4], *d_f++ = radix_[x & 0xf];
         } else {
-            auto xs = _mm_shuffle_epi8(
-                _mm_set_epi64x((x_.x >> 4) & 0x0f0f0f0f0f0f0f0f, x_.x & 0x0f0f0f0f0f0f0f0f),
-                _mm_set_epi64x(0x0708'0609'050a'040b, 0x030c'020d'010e'000f));
-            const auto radix = _mm_setr_epi8('0', '1', '2', '3', '4', '5', '6', '7', //
-                                             '8', '9', 'a', 'b', 'c', 'd', 'e', 'f');
-            xs               = _mm_shuffle_epi8(radix, xs);
+            const auto lo = x_.x, hi = (x_.x >> 4);
+            auto xs = _mm_unpacklo_epi8(_mm_cvtsi64_si128(lo), _mm_cvtsi64_si128(hi));
+            xs      = _mm_and_si128(xs, pi8los);
+            xs      = _mm_shuffle_epi8(radix, xs);
             _mm_storeu_si128(static_cast<__m128i *>(static_cast<void *>(d_f)), xs);
         }
         return format_impl::format(d_f + 16, static_cast<Rest &&>(rest)...);
@@ -410,7 +411,7 @@ struct format_impl {
         d_f[N - M - 1] = radix_100_table[int(y >> 32) * 2 + 1];                                    \
     else if constexpr (N > M + 1)                                                                  \
         memcpy(d_f + (N - M - 2), radix_100_table + int(y >> 32) * 2, 2);                          \
-    y = static_cast<uint32_t>(y) * uint64_t{100};
+    y *= 100;
         EAT_NUM(8);
         EAT_NUM(6);
         EAT_NUM(4);

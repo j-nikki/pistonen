@@ -233,17 +233,16 @@ JUTIL_INLINE auto b64_cidx(const auto cs) noexcept
 
 char *b64_decode_impl(const std::size_t n, const char *it, char *dit) noexcept
 {
-    CHECK(std::bit_cast<uintptr_t>(&*it) % 4, == 0);
+    CHECK(n % 4, == 0);
     for (const auto l = it + n; it != l; it += 4, dit += 3) {
-        auto xs = std::bit_cast<__m128i>(
-            _mm_broadcast_ss(static_cast<const float *>(static_cast<const void *>(it))));
-        xs = _mm_or_si128(b64_cidx<false>(xs), b64_cidx<true>(xs));
-        xs = _mm_maddubs_epi16(xs, _mm_set1_epi16(0x0140));
-        xs = _mm_hadd_epi32(xs, xs);
-        xs = _mm_hadd_epi32(xs, xs);
-        xs = _mm_mullo_epi16(xs, _mm_set1_epi32(0x0010'0001));
-        xs = _mm_srli_epi64(xs, 20);
-        xs = _mm_shuffle_epi8(xs, _mm_set1_epi32(0x000102));
+        auto xs = _mm_set1_epi32(jutil::loadu<int32_t>(it));
+        xs      = _mm_or_si128(b64_cidx<false>(xs), b64_cidx<true>(xs));
+        xs      = _mm_maddubs_epi16(xs, _mm_set1_epi16(0x0140));
+        xs      = _mm_hadd_epi32(xs, xs);
+        xs      = _mm_hadd_epi32(xs, xs);
+        xs      = _mm_mullo_epi16(xs, _mm_set1_epi32(0x0010'0001));
+        xs      = _mm_srli_epi64(xs, 20);
+        xs      = _mm_shuffle_epi8(xs, _mm_set1_epi32(0x000102));
         _mm_storeu_si32(&*dit, xs);
     }
     return dit;
@@ -258,19 +257,11 @@ struct b64_decode_result {
 template <jutil::sized_contiguous_range I, jutil::sized_contiguous_range O>
 JUTIL_INLINE b64_decode_result<I, O> b64_decode(I &&i, O &&o) noexcept
 {
-    const auto n   = std::min(sr::size(i) * 4, sr::size(o) * 3 - 3) / 16;
+    const auto n   = std::min(sr::size(i) * 4, sr::size(o) * 3 - 3) / 16 * 4;
     const auto it  = sr::begin(i);
     const auto dit = sr::begin(o);
-    return {it + n, sr::iterator_t<O>{::detail::b64_decode_impl(n, &*it, &*dit)}};
-}
-
-void asd()
-{
-    alignas(4) const char src[] = "YWJjZGVmZw==";
-    std::array<char, 128> res;
-    sr::copy(std::string_view{"abcdefg"}, res.begin());
-    auto [in, out] = b64_decode(src, res);
-    printf("%.*s\n", static_cast<int>(out - res.data()), res.data());
+    return {sr::iterator_t<I>{it + n},
+            sr::iterator_t<O>{::detail::b64_decode_impl(n, &*it, &*dit)}};
 }
 
 //

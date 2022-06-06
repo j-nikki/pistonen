@@ -2,6 +2,9 @@
 
 namespace format::detail
 {
+const __m128i radix  = _mm_setr_epi8('0', '1', '2', '3', '4', '5', '6', '7', //
+                                     '8', '9', 'a', 'b', 'c', 'd', 'e', 'f');
+const __m128i pi8los = _mm_set1_epi8(0xf);
 char *format_impl::itoa(const uint32_t x, char *d_f) noexcept
 {
     // algorithm from here: https://jk-jeon.github.io/posts/2022/02/jeaiii-algorithm/

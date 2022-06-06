@@ -43,7 +43,7 @@ const char *get_pass(char *const buf, const std::size_t nbuf, const char *prompt
 }
 
 template <std::size_t N>
-const char *get_pass(char (&buf)[N], const char *prompt) noexcept
+JUTIL_INLINE const char *get_pass(char (&buf)[N], const char *prompt) noexcept
 {
     return get_pass(buf, N, prompt);
 }
@@ -75,7 +75,7 @@ int main(int argc, char **argv)
                  }
                  return 0;
              }) //
-            (strs("-www-root", "w")(help, "Set path from which static files can be served."),
+            (strs("-www-root", "w")(help, "Set path to dir from which static files can be served."),
              [](const std::string_view sv) { g_wwwroot = sv.data(); }) //
             (strs("-log-dir", "l")(help, "Set path to dir into which log files are put."),
              [](const std::string_view sv) {
