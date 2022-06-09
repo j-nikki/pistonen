@@ -7,3 +7,6 @@ libressl/3.5.2
 
 [generators]
 cmake
+
+[options]
+boost:header_only=True
