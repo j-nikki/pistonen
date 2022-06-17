@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <boost/mp11/algorithm.hpp>
 #include <boost/preprocessor/cat.hpp>
 #include <boost/preprocessor/comparison/equal.hpp>
 #include <boost/preprocessor/control/if.hpp>
@@ -16,11 +17,15 @@
 #include <limits.h>
 #include <limits>
 #include <memory>
+#include <numeric>
+#include <range/v3/view/zip.hpp>
 #include <ranges>
 #include <span>
 #include <type_traits>
 #include <utility>
 #include <x86intrin.h>
+
+#include "lmacro_begin.h"
 
 namespace jutil
 {
@@ -42,6 +47,10 @@ constexpr std::size_t hardware_destructive_interference_size  = 64;
 
 namespace sr = std::ranges;
 namespace sv = std::views;
+namespace r3 = ranges::v3;
+namespace rv = r3::view;
+namespace ra = r3::actions;
+namespace bm = boost::mp11;
 
 namespace impl
 {
@@ -90,6 +99,8 @@ constexpr To opaque_cast(From &x) noexcept
     else
         return std::bit_cast<To>(x);
 }
+template <class T>
+using opaque = std::aligned_storage_t<sizeof(T), alignof(T)>;
 
 template <class T, class... Us>
 concept one_of = (std::same_as<T, Us> or ...);
@@ -590,12 +601,24 @@ requires bit_castable<T, std::array<char, sizeof(T)>>
 //
 // store
 //
-template <class T>
+template <class T_, class T = std::remove_cvref_t<T_>>
 requires bit_castable<std::array<char, sizeof(T)>, T>
-constexpr void storeu(auto d_it, const T &val) noexcept
+constexpr void storeu(auto d_it, T_ &&val) noexcept
 {
     const auto buf = std::bit_cast<std::array<char, sizeof(T)>>(val);
     std::copy_n(buf.begin(), sizeof(T), d_it);
+}
+
+//
+// opaque
+//
+template <class T, callable<T &> F, class R = decltype(f(std::declval<T &>()))>
+R opaque_visit(char *p, callable<T &> auto &&f) noexcept(noexcept(f(std::declval<T &>())))
+{
+    T x   = loadu<T>(p);
+    R res = f(x);
+    storeu(p, x);
+    return res;
 }
 
 //
@@ -976,6 +999,57 @@ constexpr inline getter<0> fst{};
 constexpr inline getter<1> snd{};
 
 //
+// idx
+//
+template <std::size_t N>
+constexpr inline std::integral_constant<std::size_t, N> idx{};
+template <ssize_t N>
+constexpr inline std::integral_constant<ssize_t, N> sidx{};
+
+//
+// soa
+//
+namespace detail
+{
+template <class...>
+struct soa_ty;
+template <std::size_t... Is, class... Ts>
+class soa_ty<std::index_sequence<Is...>, Ts...> : std::array<std::size_t, sizeof...(Ts)>
+{
+    using base_type = std::array<std::size_t, sizeof...(Ts)>;
+    using this_type = soa_ty<Ts...>;
+
+    using base_type::at;
+    using base_type::back;
+
+  public:
+    consteval soa_ty() noexcept : base_type{}
+    {
+        std::array xs{std::pair{sizeof(Ts), Is}...};
+        sr::sort(xs, sr::greater{});
+        std::size_t i = 0;
+        ((at(xs[Is].second) = i, i += xs[Is].first), ...);
+    }
+
+    JUTIL_CI std::size_t size(const std::size_t nxs) const noexcept
+    {
+        return (sizeof(Ts) + ...) * nxs;
+    }
+
+    JUTIL_INLINE auto operator()(auto I, std::byte *const p, const std::size_t cap,
+                                 const std::size_t sz) const noexcept
+    {
+        if constexpr (I == -1)
+            return r3::zip_view{at<Is>(p, cap, sz)...};
+        else
+            return std::span{reinterpret_cast<bm::mp_at_c<this_type, I> *>(p + cap * at(I)), sz};
+    }
+};
+} // namespace detail
+template <class... Ts>
+constexpr inline detail::soa_ty<std::index_sequence_for<Ts...>, Ts...> soa;
+
+//
 // each
 //
 namespace detail
@@ -1022,6 +1096,16 @@ JUTIL_CI void each(T &&xs, F &&f) noexcept(noexcept(
 }
 
 //
+// forward
+//
+template <class... Ts>
+JUTIL_CI std::tuple<Ts &&...>
+forward(Ts &&...xs) noexcept(std::is_nothrow_constructible_v<std::tuple<Ts &&...>, Ts &&...>)
+{
+    return {static_cast<Ts &&>(xs)...};
+}
+
+//
 // caster
 //
 template <class T>
@@ -1036,6 +1120,9 @@ struct caster {
 template <class T>
 constexpr inline caster<T> cast{};
 
+//
+// FREF
+//
 #define FREF(F, ...)                                                                               \
     []<class... BOOST_PP_CAT(Ts, __LINE__)>(                                                       \
         BOOST_PP_CAT(Ts, __LINE__) &&                                                              \
@@ -1083,3 +1170,5 @@ constexpr inline auto iota = []<auto... xs>(std::integer_sequence<decltype(A + B
     S(S &&)      = delete;
 
 } // namespace jutil
+
+#include "lmacro_end.h"

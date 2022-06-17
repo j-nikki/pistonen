@@ -31,6 +31,8 @@ enum valty {
 struct fnsig {
     std::vector<void *> params;
     std::vector<void *> rets;
+    inline fnsig(const std::initializer_list<std::string_view> ps,
+                 const std::initializer_list<std::string_view> rs);
 };
 
 using type                 = bv::variant<struct fnsig, valty>;
@@ -55,6 +57,15 @@ JUTIL_INLINE type_ptr get_type(const std::string_view sv) noexcept
 {
     const auto it = types.find(sv, robin_hood::is_transparent_tag{});
     return it == types.end() ? nullptr : &*it;
+}
+
+inline fnsig::fnsig(const std::initializer_list<std::string_view> ps,
+                    const std::initializer_list<std::string_view> rs)
+{
+    for (const auto t : ps | sv::transform(FREF(get_type)))
+        params.push_back(t);
+    for (const auto t : rs | sv::transform(FREF(get_type)))
+        params.push_back(t);
 }
 
 } // namespace ptf

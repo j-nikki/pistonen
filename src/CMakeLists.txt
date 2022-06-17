@@ -21,7 +21,7 @@ add_custom_command(
 #
 
 add_executable(
-  server "${CMAKE_CURRENT_BINARY_DIR}/include/res.cpp" "server.cpp"
+  server "${CMAKE_CURRENT_BINARY_DIR}/include/res.cpp" "server.cpp" "ptf/writer.cpp" "ptf/ptf.cpp" "ptf/table.cpp"
          "message.cpp" "vocabserv.cpp" "format.cpp" "buffer.cpp")
 target_include_directories(
   server PRIVATE "${CONAN_INCLUDE_DIRS}" "${PROJECT_SOURCE_DIR}/include"

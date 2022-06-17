@@ -1,7 +1,9 @@
 #pragma once
 
-#include "../../jutil.h"
 #include <string.h>
+
+#include "type.h"
+#include "../../jutil.h"
 
 #include "../../lmacro_begin.h"
 
