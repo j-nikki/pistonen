@@ -1,14 +1,17 @@
 [requires]
-boost/1.79.0
-robin-hood-hashing/3.11.5
-range-v3/0.11.0
-magic_enum/0.8.0
-libressl/3.5.2
-taocpp-pegtl/3.2.5
-benchmark/1.6.1
+benchmark/[>=1.8.2]
+boost/[>=1.82.0]
+cmake/[>=3.26.4]
+doctest/[>=2.4.11]
+libressl/[>=3.5.3]
+magic_enum/[>=0.9.3]
+range-v3/[>=0.12.0]
+robin-hood-hashing/[>=3.11.5]
+taocpp-pegtl/[>=3.2.7]
 
 [generators]
-cmake
+CMakeToolchain
+CMakeDeps
 
 [options]
-boost:header_only=True
+boost/*:header_only=True
