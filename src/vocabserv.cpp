@@ -1,18 +1,24 @@
 #include "vocabserv.h"
 
-#include <filesystem>
+#include <grp.h>
+#include <jutil/argparse.h>
+#include <jutil/b64.h>
+#include <jutil/macro.h>
+#include <pwd.h>
+#include <sqlite3.h>
 #include <stdio.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 #include <termios.h>
 #include <unistd.h>
 
+#include "buffer.h"
 #include "format.h"
-#include "options.h"
 #include "server.h"
+#include "string.h"
 
-namespace sc = std::chrono;
-namespace sf = std::filesystem;
+#include <jutil/lmacro.inl>
 
-detail::log g_log;
 detail::vocab g_vocab;
 const char *g_wwwroot = ".";
 
@@ -53,65 +59,67 @@ namespace ptf
 void test();
 }
 
-int main(int /*argc*/, char ** /*argv*/)
+static constexpr auto user  = "nobody";
+static constexpr auto group = "nogroup";
+
+struct args_t : pnen::run_server_options {
+    const char *user  = nullptr;
+    const char *group = nullptr;
+};
+
+sqlite3 *g_pdb = nullptr;
+
+int entry(args_t args, std::span<const char *const> posargs)
 {
-    using options::help;
-    using options::strs;
-    try {
-        static pnen::run_server_options opts{};
+    if (args.user) {
+        const auto uid = CHECK(getpwnam(user), != nullptr)->pw_uid;
+        const auto gid = CHECK(getgrnam(group), != nullptr)->gr_gid;
+        CHECK(setgroups(0, nullptr), == 0);
+        CHECK(setgid(gid), == 0);
+        CHECK(setuid(uid), == 0);
+    }
+    if (CHECK(access("..", R_OK | W_OK | X_OK), != -1 || errno == EACCES) == 0) {
+        g_log.warn(".. is accessible");
+    }
+    if (CHECK(access(".", R_OK | W_OK | X_OK), != -1 || errno == EACCES) == -1) {
+        g_log.info(". is not accessible");
+    }
+    const char *db = CHECK(posargs, .size() == 1)[0];
+    g_log.info("opening database ", db);
+    CHECK(sqlite3_open_v2(db, &g_pdb, SQLITE_OPEN_READWRITE | SQLITE_OPEN_NOMUTEX, nullptr),
+          == SQLITE_OK);
+    DEFER[=] { sqlite3_close_v2(g_pdb); };
+    CHECK(sqlite3_create_function(
+              g_pdb, "b64en", 1, SQLITE_UTF8, nullptr,
+              +[](sqlite3_context *ctx, int, sqlite3_value **args_) {
+                  const auto nblob = sqlite3_value_bytes(args_[0]);
+                  const auto blob  = reinterpret_cast<const char *>(sqlite3_value_blob(args_[0]));
+                  const auto nbuf  = (nblob + 5) / 6 * 8;
+                  const auto buf   = reinterpret_cast<char *>(sqlite3_malloc(nbuf));
+                  auto bit =
+                      &*jutil::b64_encode_pad(std::span{blob, static_cast<std::size_t>(nblob)},
+                                              std::span{buf, static_cast<std::size_t>(nbuf)});
+                  sqlite3_result_text(ctx, buf, bit - buf, sqlite3_free);
+              },
+              nullptr, nullptr),
+          == SQLITE_OK);
+    g_log.info("starting server at https://", args.host, ":", args.port);
+    pnen::run_server(args);
+    return 0;
+}
 
-        static constexpr auto ov = options::make_visitor([](const std::string_view sv) {
-            fprintf(stderr, "unknown argument '%.*s'\n", static_cast<int>(sv.size()), sv.data());
-            return 1;
-        }) //
-            (strs("-port-num", "p")(help, "Set the port to listen on."),
-             [](const std::string_view sv) {
-                 if (sscanf(sv.data(), "%hu", &opts.hostport) != 1) {
-                     fprintf(stderr, "couldn't read port as int (\"%s\")", sv.data());
-                     return 1;
-                 }
-                 return 0;
-             }) //
-            (strs("-vocab-path", "v")(help, "Set path to vocab.gz."),
-             [](const std::string_view sv) {
-                 if (!g_vocab.init(sv.data())) {
-                     fprintf(stderr, "couldn't open vocab file \"%s\"\n", sv.data());
-                     return 1;
-                 }
-                 return 0;
-             }) //
-            (strs("-www-root", "w")(help, "Set path to dir from which static files can be served."),
-             [](const std::string_view sv) { g_wwwroot = sv.data(); }) //
-            (strs("-log-dir", "l")(help, "Set path to dir into which log files are put."),
-             [](const std::string_view sv) {
-                 if (!g_log.init(sv.data())) {
-                     fprintf(stderr, "couldn't access log dir \"%s\"\n", sv.data());
-                     return 1;
-                 }
-                 return 0;
-             }) //
-            (strs("-cert", "c")(help, "Set path to certificate file."),
-             [](const std::string_view cert) { opts.ssl_cert = cert.data(); }) //
-            (strs("-pkey", "k")(help, "Set path to private key file."),
-             [](const std::string_view pkey) { opts.ssl_pkey = pkey.data(); }) //
-            (strs("-pkpass", "P")(help, "Give pkey password, or 'prompt' for interactive prompt."),
-             [](const std::string_view pass) { opts.pk_pass = pass.data(); }) //
-            ("vocabserv", "program for serving a static vocabulary listing");
-
-        if (const auto res = options::visit(argc, argv, ov, options::default_visitor)) return res;
-
-        char pwbuf[128];
-        if (opts.pk_pass && strcmp(opts.pk_pass, "prompt") == 0)
-            opts.pk_pass = get_pass(pwbuf, "Enter PEM pass phrase:");
-
-        DBGEXPR(printf("server will run on https://localhost:%hu...\n", opts.hostport));
-        pnen::run_server(opts, handle_connection);
-
-    //     return 0;
-    // } catch (const std::exception &e) {
-    //     fprintf(stderr, "%s: exception occurred: %s\n", argv[0], e.what());
-    //     return 1;
-    // }
+int main(int argc, char *argv[])
+{
+    using namespace jutil;
+    g_log.init(stdout, logger::level::debug);
+    auto ap = argparse<"jutil", help_cmd,                                                         //
+                       command<"H", "host", 1, "address to host on, default 0.0.0.0", L(x.host)>, //
+                       command<"p", "port", 1, "port to host on, default 8080", L(x.port)>,       //
+                       command<"u", "user", 1, "user to switch to", L(x.user)>,                   //
+                       command<"g", "group", 1, "group to switch to", L(x.group)>                 //
+                       >;
+    return ap(
+        argc, argv, [] { return args_t{}; }, entry);
 }
 
 bool detail::vocab::init(const char *path)
@@ -127,12 +135,4 @@ bool detail::vocab::init(const char *path)
     return true;
 }
 
-bool detail::log::init(const char *dir)
-{
-    // TODO: replace id with timestamp
-    const auto id = static_cast<std::size_t>(
-        std::distance(sf::directory_iterator{dir}, sf::directory_iterator{}));
-    char path[64];
-    format::format(path, std::string_view{dir}, "/", id, ".log\0");
-    return (file = fopen(path, "w"));
-}
+#include <jutil/lmacro.inl>

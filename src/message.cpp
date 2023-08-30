@@ -1,14 +1,18 @@
 #include "message.h"
 
+#include <jutil/alg.h>
+#include <jutil/bit.h>
 #include <magic_enum.hpp>
 #include <string.h>
 
-#include "lmacro_begin.h"
+#include <jutil/lmacro.inl>
 
 constexpr auto phdrws = L(x == ' ' || x == '\t');
 
-using namespace jutil;
+namespace j           = jutil;
 
+namespace pnen
+{
 void headers::grow()
 {
     const auto new_cap = cap_ * 2;
@@ -25,8 +29,8 @@ void headers::reserve(char *const kf, char *const kl, char *const vf, char *cons
     const auto f = begin();
     const auto l = end();
     l->first.n   = 0;
-    const string k{kf, static_cast<std::size_t>(kl - kf)};
-    const auto lb = find_if_always_idx(f, l + 1, L(!(k < x.first), k));
+    const pnen::string k{kf, static_cast<std::size_t>(kl - kf)};
+    const auto lb = j::find_if_always_idx(f, l + 1, L(!(k < x.first), k));
     memmove(&f[lb + 1], &f[lb], sizeof(entry) * (n_ - lb));
     ++n_;
     f[lb] = {k, {vf, static_cast<std::size_t>(vl - vf)}};
@@ -36,7 +40,8 @@ void headers::reserve(char *const kf, char *const kl, char *const vf, char *cons
 // parse_header
 //
 
-constexpr auto lccnv = L(to_unsigned(x - 'A') <= to_unsigned('Z' - 'A') ? x + ('a' - 'A') : x);
+constexpr auto lccnv =
+    L(j::to_unsigned(x - 'A') <= j::to_unsigned('Z' - 'A') ? x + ('a' - 'A') : x);
 void parse_header(char *f, char *const l, message &msg)
 {
     auto i = std::find(f, l, '\r');
@@ -44,10 +49,11 @@ void parse_header(char *f, char *const l, message &msg)
     msg.hdrs.clear();
     l[1] = ':'; // sentinel
     while (reinterpret_cast<uintptr_t>(i) < reinterpret_cast<uintptr_t>(l)) {
-        f                = i + 2;
-        const auto colon = transform_always_until(f, l + 2, f, L(static_cast<char>(lccnv(x))), ':');
-        const auto val   = find_if_always(colon + 1, l + 2, L(!(phdrws(x))));
-        i                = find_always(val, l + 3, '\r');
+        f = i + 2;
+        const auto colon =
+            j::transform_always_until(f, l + 2, f, L(static_cast<char>(lccnv(x))), ':');
+        const auto val = j::find_if_always(colon + 1, l + 2, L(!(phdrws(x))));
+        i              = j::find_always(val, l + 3, '\r');
         msg.hdrs.reserve(f, colon, val, i);
     }
 }
@@ -96,22 +102,23 @@ constexpr uint8_t mtdns[]{sizeof("GET") - 1,     sizeof("HEAD") - 1,
 
 void parse_start(char *const f, char *const l, start &s) noexcept
 {
-    const auto y    = loadu<const int64_t>(f);
-    const auto mtdi = find_if_always_idx(mtds, L(!(x & y), y));
+    const auto y    = j::loadu<const int64_t>(f);
+    const auto mtdi = j::find_if_always_idx(mtds, L(!(x & y), y));
     s.mtd           = static_cast<method>(mtdi);
 
-    const auto tgtf = find_if_always(f + mtdns[mtdi], l + 1, L(!phdrws(x)));
-    const auto tgtl = find_if_snt(tgtf, l + 2, phdrws, ' ');
+    const auto tgtf = j::find_if_always(f + mtdns[mtdi], l + 1, L(!phdrws(x)));
+    const auto tgtl = j::find_if_snt(tgtf, l + 2, phdrws, ' ');
     s.tgt           = {tgtf, static_cast<std::size_t>(tgtl - tgtf)};
 
-    const auto verf = find_if_always(tgtl, l + 1, L(!phdrws(x)));
-    const auto v    = loadu<const int64_t>(verf);
+    const auto verf = j::find_if_always(tgtl, l + 1, L(!phdrws(x)));
+    const auto v    = j::loadu<const int64_t>(verf);
     if (verf + 8 != l) [[unlikely]]
         s.ver = version::err;
-    else if (v == loadu<const int64_t>("HTTP/1.0"))
+    else if (v == j::loadu<const int64_t>("HTTP/1.0"))
         s.ver = version::http10;
-    else if (v == loadu<const int64_t>("HTTP/1.1"))
+    else if (v == j::loadu<const int64_t>("HTTP/1.1"))
         s.ver = version::http11;
     else [[unlikely]]
         s.ver = version::err;
 }
+} // namespace pnen

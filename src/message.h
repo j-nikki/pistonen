@@ -1,46 +1,21 @@
 #pragma once
 
+#include <algorithm>
 #include <limits>
 #include <memory>
 #include <stdexcept>
 #include <string_view>
 
-#include "jutil.h"
+#include <jutil/core.h>
 
-#include "lmacro_begin.h"
+#include "string.h"
+
+#include <jutil/lmacro.inl>
 
 namespace sr = std::ranges;
 
-//
-// STRING
-//
-
-struct string {
-    char *p;
-    std::size_t n;
-    constexpr JUTIL_INLINE const char *begin() const noexcept { return p; }
-    constexpr JUTIL_INLINE const char *end() const noexcept { return p + n; }
-    constexpr JUTIL_INLINE std::strong_ordering
-    operator<=>(const std::string_view rhs) const noexcept
-    {
-        return std::string_view{*this} <=> rhs;
-    }
-    constexpr JUTIL_INLINE bool operator==(const std::string_view rhs) const noexcept
-    {
-        return std::is_eq(operator<=>(rhs));
-    }
-    constexpr JUTIL_INLINE std::strong_ordering operator<=>(const string rhs) const noexcept
-    {
-        return std::string_view{*this} <=> rhs;
-    }
-    constexpr JUTIL_INLINE bool operator==(const string rhs) const noexcept
-    {
-        return std::is_eq(operator<=>(rhs));
-    }
-    constexpr JUTIL_INLINE string substr(std::size_t m) const noexcept { return {p + m, n - m}; }
-    constexpr JUTIL_INLINE operator std::string_view() const noexcept { return {p, n}; }
-    constexpr JUTIL_INLINE std::string_view sv() const noexcept { return {p, n}; }
-};
+namespace pnen
+{
 
 //
 // STARTLINE
@@ -49,7 +24,7 @@ struct string {
 enum class method { GET, HEAD, POST, PUT, DELETE_, CONNECT, OPTIONS, TRACE, PATH, err };
 enum class version { http10, http11, err };
 struct start {
-    string tgt;
+    pnen::string tgt;
     version ver;
     method mtd;
 };
@@ -62,7 +37,7 @@ void parse_start(char *const f, char *const l, start &s) noexcept;
 
 struct headers {
     struct entry {
-        string first, second;
+        pnen::string first, second;
     };
     static constexpr auto defcap = 64uz;
 
@@ -84,36 +59,56 @@ struct headers {
     //
     // KEY GET
     //
-    [[nodiscard]] JUTIL_INLINE std::string_view get(const std::string_view keyuc) const
+    [[nodiscard]] JUTIL_INLINE const pnen::string *get(const std::string_view keyuc) const
     {
         const auto it = sr::find(begin(), end(), keyuc, L(std::string_view(x.first.p, x.first.n)));
-        return (it == end()) ? throw std::out_of_range{"headers::get"} : it->second;
+        return (it == end()) ? nullptr : &it->second;
     }
-    [[nodiscard]] JUTIL_INLINE std::string_view get(const std::string_view keyuc,
-                                                    const std::string_view def) const noexcept
+    [[nodiscard]] JUTIL_INLINE pnen::string *get(const std::string_view keyuc)
     {
         const auto it = sr::find(begin(), end(), keyuc, L(std::string_view(x.first.p, x.first.n)));
+        return (it == end()) ? nullptr : &it->second;
+    }
+    [[nodiscard]] JUTIL_INLINE const pnen::string get(std::string_view keylc,
+                                                      pnen::string def) const noexcept
+    {
+        const auto it = sr::find(begin(), end(), keylc, L(std::string_view(x.first.p, x.first.n)));
         return (it == end()) ? def : it->second;
     }
-    template <std::size_t N>
-    [[nodiscard]] JUTIL_INLINE std::string_view get(const char (&key)[N]) const
+    [[nodiscard]] JUTIL_INLINE pnen::string get(std::string_view keylc, pnen::string def) noexcept
     {
-        char uc[N - 1];
-        std::transform(key, key + (N - 1), uc, FREF(tolower));
-        return get(std::string_view{uc});
-    }
-    template <std::size_t N>
-    [[nodiscard]] JUTIL_INLINE std::string_view get(const char (&key)[N],
-                                                    const std::string_view def) const noexcept
-    {
-        char uc[N - 1];
-        std::transform(key, key + (N - 1), uc, FREF(tolower));
-        return get(std::string_view{uc}, def);
+        const auto it = sr::find(begin(), end(), keylc, L(std::string_view(x.first.p, x.first.n)));
+        return (it == end()) ? def : it->second;
     }
 
     std::unique_ptr<entry[]> buf_ = std::make_unique_for_overwrite<entry[]>(defcap);
     std::size_t n_ = 0uz, cap_ = defcap;
 };
+template <jutil::string S, jutil::string D>
+[[nodiscard]] JUTIL_INLINE pnen::string get(headers &h) noexcept
+{
+    static constexpr auto lc = [] {
+        std::array<char, S.size()> res;
+        sr::transform(
+            S, res.begin(),
+            L(jutil::to_unsigned(x - 'A') <= jutil::to_unsigned('Z' - 'A') ? x + ('a' - 'A') : x));
+        return res;
+    }();
+    static constinit auto def = D; // jutil::append<'\0'>(D);
+    return h.get({lc.data(), lc.size()}, {def.data(), def.size()});
+}
+template <jutil::string S>
+[[nodiscard]] JUTIL_INLINE pnen::string *get(headers &h) noexcept
+{
+    static constexpr auto lc = [] {
+        std::array<char, S.size()> res;
+        sr::transform(
+            S, res.begin(),
+            L(jutil::to_unsigned(x - 'A') <= jutil::to_unsigned('Z' - 'A') ? x + ('a' - 'A') : x));
+        return res;
+    }();
+    return h.get({lc.data(), lc.size()});
+}
 
 //! @brief Parses given HTTP message header; [f:l) must be writable; l must point to CRLFCR and be writable
 //! @param f Pointer to the beginning of the message
@@ -129,7 +124,8 @@ void print_header(const struct message &msg);
 struct message {
     start strt;
     headers hdrs;
-    string body;
+    pnen::string body;
 };
+} // namespace pnen
 
-#include "lmacro_end.h"
+#include <jutil/lmacro.inl>

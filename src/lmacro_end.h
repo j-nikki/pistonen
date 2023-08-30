@@ -1,6 +1,0 @@
-#pragma pop_macro("L")
-#pragma pop_macro("L2")
-#pragma pop_macro("L0")
-#pragma pop_macro("M")
-#pragma pop_macro("M2")
-#pragma pop_macro("M0")
